@@ -6,13 +6,21 @@ name: Sync upstream spec-kit
 #   main     — clean mirror of upstream github/spec-kit. Never has custom code.
 #   cl/main  — CL customizations rebased on top of main. This is the install branch.
 #
-# What this workflow does:
-#   1. Fast-forward `main` to upstream/main (never conflicts — no custom code on main)
-#   2. Rebase `cl/main` onto updated `main`
-#   3. If there were upstream changes, create a PR from a `sync/upstream-*` branch
-#      against `cl/main` so changes can be reviewed before cl/main is updated.
+# Two paths depending on what changed upstream:
 #
-# Install command: uv tool install specify-cli --from git+https://github.com/nzscout/spec-cat.git@cl/main
+# PATH A — New upstream RELEASE TAG detected (e.g. v0.5.2):
+#   1. Fast-forward main to upstream/main
+#   2. Rebase cl/main onto main
+#   3. Compute CL tag: v{upstream-version}-cl1 (or -cl2 if already exists)
+#   4. Push cl/main + tag → triggers release-cl.yml automatically
+#   5. On rebase failure: create a manual-resolution PR instead
+#
+# PATH B — New commits only (no new release tag):
+#   1. Fast-forward main to upstream/main
+#   2. Create a sync/upstream-* branch and PR against cl/main for review
+#
+# Install (pinned):  uv tool install specify-cli --from git+https://github.com/nzscout/spec-cat.git@v0.5.2-cl1
+# Install (latest):  uv tool install specify-cli --from git+https://github.com/nzscout/spec-cat.git@cl/main
 
 on:
   schedule:
@@ -43,57 +51,82 @@ jobs:
         run: |
           git remote add upstream https://github.com/github/spec-kit.git || true
           git fetch upstream main --tags
-          git fetch origin main
+          git fetch origin main --tags
 
-      - name: Check if upstream has new commits
-        id: diff
+      # ── Detect what changed upstream ─────────────────────────────────────
+
+      - name: Detect new upstream release tag
+        id: detect
         run: |
+          # Latest upstream release tag (excludes our -cl* tags)
+          LATEST_UPSTREAM=$(git tag --list 'v*' --sort=-version:refname \
+            | grep -v -- '-cl' | head -1)
+          echo "latest_upstream_tag=$LATEST_UPSTREAM" >> "$GITHUB_OUTPUT"
+
+          if [ -z "$LATEST_UPSTREAM" ]; then
+            echo "new_release=false" >> "$GITHUB_OUTPUT"
+            echo "No upstream release tags found"
+          else
+            # Is this tag's commit already in origin/main?
+            TAG_COMMIT=$(git rev-list -n1 "$LATEST_UPSTREAM" 2>/dev/null || true)
+            ALREADY_IN_MAIN=$(git branch -r --contains "$TAG_COMMIT" 2>/dev/null \
+              | grep 'origin/main' || true)
+            if [ -n "$ALREADY_IN_MAIN" ]; then
+              echo "new_release=false" >> "$GITHUB_OUTPUT"
+              echo "Upstream tag $LATEST_UPSTREAM already in origin/main — nothing to do"
+            else
+              echo "new_release=true" >> "$GITHUB_OUTPUT"
+              echo "New upstream release detected: $LATEST_UPSTREAM"
+            fi
+          fi
+
+          # Also count plain commits (for PATH B)
           BEHIND=$(git rev-list origin/main..upstream/main --count)
           echo "behind=$BEHIND" >> "$GITHUB_OUTPUT"
-          echo "Upstream is $BEHIND commit(s) ahead of fork main"
 
       - name: Nothing to do
-        if: steps.diff.outputs.behind == '0'
-        run: echo "Fork main is already up to date with upstream. No PR needed."
+        if: steps.detect.outputs.new_release == 'false' && steps.detect.outputs.behind == '0'
+        run: echo "Fork is already up to date with upstream."
 
-      - name: Fast-forward origin/main to upstream/main
-        if: steps.diff.outputs.behind != '0'
+      # ── PATH A — New release tag: auto-sync + auto-tag ───────────────────
+
+      - name: "[A] Fast-forward main to upstream"
+        if: steps.detect.outputs.new_release == 'true'
         run: |
           git checkout main
           git reset --hard upstream/main
           git push origin main
           git checkout cl/main
 
-      - name: Create sync branch off cl/main and rebase onto updated main
-        if: steps.diff.outputs.behind != '0'
-        id: branch
+      - name: "[A] Rebase cl/main onto updated main"
+        if: steps.detect.outputs.new_release == 'true'
+        id: rebase
         run: |
-          BRANCH="sync/upstream-$(date +%Y%m%d-%H%M)"
-          echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
-          git checkout -b "$BRANCH"
-          git rebase origin/main
+          if git rebase origin/main; then
+            echo "failed=false" >> "$GITHUB_OUTPUT"
+          else
+            git rebase --abort || true
+            echo "failed=true" >> "$GITHUB_OUTPUT"
+          fi
 
-      - name: Verify patch anchors (dry-run on a temp copy)
-        if: steps.diff.outputs.behind != '0'
+      - name: "[A] Verify patch anchors"
+        if: steps.detect.outputs.new_release == 'true' && steps.rebase.outputs.failed == 'false'
         id: patch_check
         shell: pwsh
         run: |
           $anchorWarnings = @()
-
           $templateFile = "templates/commands/specify.md"
           if (Test-Path $templateFile) {
               $content = Get-Content $templateFile -Raw
-
               if ($content -notmatch '1\. \*\*Generate a concise short name\*\*') {
-                  $anchorWarnings += "specify step-1 anchor not found in upstream template"
+                  $anchorWarnings += "specify step-1 anchor not found"
               }
               if ($content -notmatch '2\. \*\*Create the feature branch\*\* by running') {
-                  $anchorWarnings += "specify step-2 anchor not found in upstream template"
+                  $anchorWarnings += "specify step-2 anchor not found"
               }
           } else {
               $anchorWarnings += "templates/commands/specify.md not found"
           }
-
           if ($anchorWarnings.Count -gt 0) {
               Write-Host "::warning::PATCH ANCHOR CHECK FAILED:"
               $anchorWarnings | ForEach-Object { Write-Host "::warning::  - $_" }
@@ -103,47 +136,102 @@ jobs:
               "anchor_ok=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
           }
 
-      - name: Push sync branch
-        if: steps.diff.outputs.behind != '0'
-        run: git push origin "${{ steps.branch.outputs.branch }}"
+      - name: "[A] Compute CL tag"
+        if: steps.detect.outputs.new_release == 'true' && steps.rebase.outputs.failed == 'false'
+        id: cl_tag
+        run: |
+          UPSTREAM_TAG="${{ steps.detect.outputs.latest_upstream_tag }}"
+          # Find highest existing cl tag for this upstream version, increment
+          EXISTING=$(git tag --list "${UPSTREAM_TAG}-cl*" \
+            | grep -oP 'cl\K[0-9]+' | sort -n | tail -1)
+          if [ -z "$EXISTING" ]; then
+            CL_TAG="${UPSTREAM_TAG}-cl1"
+          else
+            CL_TAG="${UPSTREAM_TAG}-cl$((EXISTING + 1))"
+          fi
+          echo "cl_tag=$CL_TAG" >> "$GITHUB_OUTPUT"
+          echo "Computed CL tag: $CL_TAG"
 
-      - name: Create pull request into cl/main
-        if: steps.diff.outputs.behind != '0'
+      - name: "[A] Push cl/main and tag — triggers release-cl.yml"
+        if: steps.detect.outputs.new_release == 'true' && steps.rebase.outputs.failed == 'false'
+        run: |
+          git push origin cl/main --force-with-lease
+          git tag "${{ steps.cl_tag.outputs.cl_tag }}"
+          git push origin "${{ steps.cl_tag.outputs.cl_tag }}"
+
+      - name: "[A] Summary"
+        if: steps.detect.outputs.new_release == 'true' && steps.rebase.outputs.failed == 'false'
+        run: |
+          ANCHOR="${{ steps.patch_check.outputs.anchor_ok }}"
+          TAG="${{ steps.cl_tag.outputs.cl_tag }}"
+          echo "### Auto-synced: ${{ steps.detect.outputs.latest_upstream_tag }} → ${TAG}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- \`main\` fast-forwarded to upstream" >> $GITHUB_STEP_SUMMARY
+          echo "- \`cl/main\` rebased and pushed" >> $GITHUB_STEP_SUMMARY
+          echo "- Tag \`${TAG}\` pushed — \`release-cl.yml\` will create the GitHub Release" >> $GITHUB_STEP_SUMMARY
+          echo "- Patch anchors: $([ '$ANCHOR' = 'true' ] && echo 'OK' || echo 'WARNING — check annotations')" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Install:** \`uv tool install specify-cli --force --from git+https://github.com/nzscout/spec-cat.git@${TAG}\`" >> $GITHUB_STEP_SUMMARY
+
+      - name: "[A] Rebase failed — create manual-resolution PR"
+        if: steps.detect.outputs.new_release == 'true' && steps.rebase.outputs.failed == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          ANCHOR_STATUS="${{ steps.patch_check.outputs.anchor_ok }}"
-          BEHIND="${{ steps.diff.outputs.behind }}"
-
-          if [ "$ANCHOR_STATUS" = "false" ]; then
-            ANCHOR_NOTICE="
-          > [!WARNING]
-          > **Patch anchor check failed.** One or more anchors in \`cl-tools/patches/apply.ps1\` no longer match the upstream template. Update the \`StartAnchor\` or \`EndAnchor\` strings before merging, then re-run \`apply.ps1\` in your target repos."
-          else
-            ANCHOR_NOTICE="
-          > [!NOTE]
-          > Patch anchors verified OK — \`cl-tools/patches/apply.ps1\` will apply cleanly after \`specify init\`."
-          fi
-
+          UPSTREAM_TAG="${{ steps.detect.outputs.latest_upstream_tag }}"
+          BRANCH="sync/${UPSTREAM_TAG}-manual"
+          git checkout -b "$BRANCH" origin/main
+          git push origin "$BRANCH"
           gh pr create \
-            --title "chore: sync upstream spec-kit ($(date +%Y-%m-%d), +${BEHIND} commits)" \
-            --body "## Upstream sync
+            --title "⚠️ Manual sync needed: ${UPSTREAM_TAG}" \
+            --body "## Manual resolution required
 
-          Automated rebase of \`cl/main\` onto updated [\`github/spec-kit\` main](https://github.com/github/spec-kit).
+          Automatic rebase of \`cl/main\` onto \`${UPSTREAM_TAG}\` failed due to conflicts.
 
-          **Commits merged:** ${BEHIND}
-          ${ANCHOR_NOTICE}
-
-          ### What happened
-          - \`main\` was fast-forwarded to \`upstream/main\` (clean mirror, no custom code)
-          - \`cl/main\` customizations were rebased onto the updated \`main\`
-          - This PR targets \`cl/main\` — merge it to complete the update
-
-          ### Review checklist
-          - [ ] Review upstream changelog / new features
-          - [ ] Confirm rebase applied cleanly (no conflicts expected — CL files don't overlap upstream files)
-          - [ ] If anchor warning above: update \`cl-tools/patches/apply.ps1\` anchor strings and snippets
-          - [ ] After merge: tag a new fork release so projects can pin to a version
+          ### Steps to resolve
+          1. Check out this branch locally
+          2. Resolve conflicts, then \`git rebase --continue\`
+          3. Push resolved \`cl/main\`
+          4. Run: \`git tag ${UPSTREAM_TAG}-cl1 && git push origin ${UPSTREAM_TAG}-cl1\`
           " \
             --base cl/main \
-            --head "${{ steps.branch.outputs.branch }}"
+            --head "$BRANCH"
+          echo "::error::Rebase failed — manual PR created: sync/${UPSTREAM_TAG}-manual"
+          exit 1
+
+      # ── PATH B — New commits only: fast-forward main, open review PR ─────
+
+      - name: "[B] Fast-forward main to upstream"
+        if: steps.detect.outputs.new_release == 'false' && steps.detect.outputs.behind != '0'
+        run: |
+          git checkout main
+          git reset --hard upstream/main
+          git push origin main
+          git checkout cl/main
+
+      - name: "[B] Create review PR for non-release commits"
+        if: steps.detect.outputs.new_release == 'false' && steps.detect.outputs.behind != '0'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          BRANCH="sync/upstream-$(date +%Y%m%d-%H%M)"
+          git checkout -b "$BRANCH"
+          git rebase origin/main
+          git push origin "$BRANCH"
+          gh pr create \
+            --title "chore: upstream commits ($(date +%Y-%m-%d), +${{ steps.detect.outputs.behind }} commits, no release)" \
+            --body "## Upstream non-release sync
+
+          New commits on \`github/spec-kit\` main that are not yet part of a release tag.
+
+          **Commits ahead:** ${{ steps.detect.outputs.behind }}
+
+          > [!NOTE]
+          > No action needed until upstream publishes a release tag. This PR is informational.
+          > Once upstream tags a release, the weekly sync will auto-tag and release automatically.
+
+          - [ ] Review upstream changes
+          - [ ] Close this PR if no action needed (release sync will handle the rest)
+          " \
+            --base cl/main \
+            --head "$BRANCH"

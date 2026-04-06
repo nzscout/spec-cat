@@ -4,6 +4,7 @@ on:
   push:
     tags:
       - 'v*'
+      - '!v*-cl*'   # CL releases are handled by release-cl.yml
 
 jobs:
   release:

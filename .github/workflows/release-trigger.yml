@@ -8,8 +8,11 @@ on:
         required: false
         type: string
 
+# Disabled in spec-cat fork — CL releases are tagged automatically by sync-upstream.yml.
+# See .github/workflows/release-cl.yml for the CL release workflow.
 jobs:
   bump-version:
+    if: false   # disabled
     runs-on: ubuntu-latest
     permissions:
       contents: write
