@@ -8,9 +8,12 @@
     Two-phase post-init script:
 
     Phase 1 — Patches (always runs):
-      Calls patches/apply.ps1, which surgically replaces step 1 and step 2
-      inside the generated speckit.specify.agent.md with Git Flow / short-name
-      logic, without touching any other upstream-generated file.
+      Calls patches/apply.ps1, which surgically replaces targeted sections in
+      upstream-generated files with Git Flow / short-name logic:
+        - speckit.specify.agent.md  (steps 1 & 2 — short-name + branch creation)
+        - common.ps1                (Get-CurrentBranch fallback, Test-FeatureBranch
+                                     pattern, new Get-FeatureName, Get-FeatureDir)
+        - create-new-feature.ps1    (param block, help text, branch generation)
 
     Phase 2 — Extras (skipped if file already exists in project):
       Copies custom agents, prompts, and memory files that are not generated

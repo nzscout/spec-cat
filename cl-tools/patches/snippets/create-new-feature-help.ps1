@@ -1,0 +1,20 @@
+if ($Help) {
+    Write-Host "Usage: ./create-new-feature.ps1 [-Json] [-DryRun] [-AllowExistingBranch] [-GitFlow] [-ShortName <name>] [-Number N] [-Timestamp] <feature description>"
+    Write-Host ""
+    Write-Host "Options:"
+    Write-Host "  -Json               Output in JSON format"
+    Write-Host "  -DryRun             Compute branch name and paths without creating branches, directories, or files"
+    Write-Host "  -AllowExistingBranch  Switch to branch if it already exists instead of failing"
+    Write-Host "  -GitFlow            Use Git Flow branch naming (feature/<short-name>) with no sequential numbering"
+    Write-Host "  -ShortName <name>   Provide a custom short name for the branch (preserved as-is in GitFlow mode)"
+    Write-Host "  -Number N           Specify branch number manually (overrides auto-detection, ignored in GitFlow mode)"
+    Write-Host "  -Timestamp          Use timestamp prefix (YYYYMMDD-HHMMSS) instead of sequential numbering"
+    Write-Host "  -Help               Show this help message"
+    Write-Host ""
+    Write-Host "Examples:"
+    Write-Host "  ./create-new-feature.ps1 -GitFlow -ShortName 'DATA-5200-Feature-name' 'Add user authentication system'"
+    Write-Host "  ./create-new-feature.ps1 'Add user authentication system' -ShortName 'user-auth'"
+    Write-Host "  ./create-new-feature.ps1 'Implement OAuth2 integration for API'"
+    Write-Host "  ./create-new-feature.ps1 -Timestamp -ShortName 'user-auth' 'Add user authentication'"
+    exit 0
+}

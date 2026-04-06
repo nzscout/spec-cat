@@ -151,6 +151,107 @@ def init(
     console.rule("[bold green]Done[/bold green]")
 
 
+# ---------------------------------------------------------------------------
+# verify
+# ---------------------------------------------------------------------------
+
+@app.command()
+def verify(
+    project_root: str = typer.Option(".", "--root", "-r", help="Project root (defaults to CWD)"),
+) -> None:
+    """Verify that CL patches and extras were correctly applied to this project.
+
+    Checks landmark strings in the deployed PowerShell scripts (confirming
+    patches ran) and presence of extra agent/prompt files.  Exits 1 if any
+    check fails so the command can be used in CI or as a post-init smoke test.
+    """
+    root = Path(project_root).resolve()
+
+    console.rule("[bold cyan]speckit verify[/bold cyan]")
+    console.print(f"Project root: {root}")
+    console.print()
+
+    checks: list[tuple[str, bool, str]] = []
+
+    # --- common.ps1 patch landmarks -----------------------------------------
+    common_ps1 = root / ".specify" / "scripts" / "powershell" / "common.ps1"
+    if common_ps1.exists():
+        text = common_ps1.read_text(encoding="utf-8")
+        checks.append((
+            "common.ps1 — Get-FeatureName function inserted",
+            "function Get-FeatureName" in text,
+            str(common_ps1),
+        ))
+        checks.append((
+            "common.ps1 — feature/ branch pattern in Test-FeatureBranch",
+            "^feature/" in text,
+            str(common_ps1),
+        ))
+        checks.append((
+            "common.ps1 — Get-FeatureDir delegates to Get-FeatureName",
+            "Get-FeatureName -Branch" in text,
+            str(common_ps1),
+        ))
+    else:
+        for label in (
+            "common.ps1 — Get-FeatureName function inserted",
+            "common.ps1 — feature/ branch pattern in Test-FeatureBranch",
+            "common.ps1 — Get-FeatureDir delegates to Get-FeatureName",
+        ):
+            checks.append((label, False, f"File not found: {common_ps1}"))
+
+    # --- create-new-feature.ps1 patch landmarks -----------------------------
+    create_ps1 = root / ".specify" / "scripts" / "powershell" / "create-new-feature.ps1"
+    if create_ps1.exists():
+        text = create_ps1.read_text(encoding="utf-8")
+        checks.append((
+            "create-new-feature.ps1 — -GitFlow switch present",
+            "[switch]$GitFlow" in text,
+            str(create_ps1),
+        ))
+        checks.append((
+            "create-new-feature.ps1 — feature/ prefix assignment present",
+            '"feature/$ShortName"' in text,
+            str(create_ps1),
+        ))
+    else:
+        for label in (
+            "create-new-feature.ps1 — -GitFlow switch present",
+            "create-new-feature.ps1 — feature/ prefix assignment present",
+        ):
+            checks.append((label, False, f"File not found: {create_ps1}"))
+
+    # --- extra agent / prompt files -----------------------------------------
+    extras = [
+        ".github/agents/speckit.reviewer-code.agent.md",
+        ".github/agents/speckit.comparer-code.agent.md",
+        ".github/agents/speckit.comparer-spec.agent.md",
+        ".github/agents/context7.agent.md",
+    ]
+    for rel in extras:
+        path = root / rel
+        checks.append((f"Extra present: {rel}", path.exists(), str(path)))
+
+    # --- Print results -------------------------------------------------------
+    passed = 0
+    failed = 0
+    for label, ok, detail in checks:
+        if ok:
+            console.print(f"  [green][PASS][/green] {label}")
+            passed += 1
+        else:
+            console.print(f"  [red][FAIL][/red] {label}")
+            console.print(f"         [dim]{detail}[/dim]")
+            failed += 1
+
+    console.print()
+    if failed == 0:
+        console.rule(f"[bold green]All {passed} checks passed[/bold green]")
+    else:
+        console.rule(f"[bold red]{failed} of {passed + failed} checks failed[/bold red]")
+        raise typer.Exit(1)
+
+
 def main() -> None:
     app()
 

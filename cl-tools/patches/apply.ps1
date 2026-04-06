@@ -121,7 +121,9 @@ function Invoke-SectionPatch {
 # so you can update the anchor strings here.
 # ---------------------------------------------------------------------------
 
-$specifyAgent = Join-Path $ProjectRoot ".github/agents/speckit.specify.agent.md"
+$specifyAgent       = Join-Path $ProjectRoot ".github/agents/speckit.specify.agent.md"
+$commonScript       = Join-Path $ProjectRoot ".specify/scripts/powershell/common.ps1"
+$createFeatureScript = Join-Path $ProjectRoot ".specify/scripts/powershell/create-new-feature.ps1"
 
 $patches = @(
     @{
@@ -141,6 +143,75 @@ $patches = @(
         EndAnchor   = '^3\. '
         SnippetPath = Join-Path $ScriptDir 'snippets/specify-step2.md'
         Name        = 'specify.agent — step 2: Git Flow mode + current-branch reuse'
+    },
+
+    # ---------------------------------------------------------------------------
+    # common.ps1 — Git Flow support
+    # ---------------------------------------------------------------------------
+    @{
+        FilePath    = $commonScript
+        # The `if ($latestFeature)` early-return block inside Get-CurrentBranch.
+        # Replaced with: Git Flow fallback (most-recently-modified dir) + same return.
+        StartAnchor = '        if \(\$latestFeature\) \{'
+        EndAnchor   = '    # Final fallback'
+        SnippetPath = Join-Path $ScriptDir 'snippets/common-get-current-branch-gitflow.ps1'
+        Name        = 'common.ps1 — Get-CurrentBranch: Git Flow dir fallback'
+    },
+    @{
+        FilePath    = $commonScript
+        # The condition block inside Test-FeatureBranch that validates branch naming.
+        # Spec-cat upstream uses $hasMalformedTimestamp/$isSequential variables.
+        # Replaced with: same logic + allow feature/* pattern; Get-FeatureName appended.
+        StartAnchor = '    \$hasMalformedTimestamp = '
+        EndAnchor   = '^function Get-FeatureDir'
+        SnippetPath = Join-Path $ScriptDir 'snippets/common-test-feature-branch-get-feature-name.ps1'
+        Name        = 'common.ps1 — Test-FeatureBranch: add feature/ pattern + insert Get-FeatureName'
+    },
+    @{
+        FilePath    = $commonScript
+        # Get-FeatureDir body — delegate to Get-FeatureName to strip feature/ prefix.
+        StartAnchor = '^function Get-FeatureDir'
+        EndAnchor   = '^function Get-FeaturePathsEnv'
+        SnippetPath = Join-Path $ScriptDir 'snippets/common-get-feature-dir.ps1'
+        Name        = 'common.ps1 — Get-FeatureDir: resolve via Get-FeatureName'
+    },
+
+    # ---------------------------------------------------------------------------
+    # create-new-feature.ps1 — Git Flow support
+    # ---------------------------------------------------------------------------
+    @{
+        FilePath    = $createFeatureScript
+        # Param block — adds -GitFlow switch.
+        StartAnchor = '^\[CmdletBinding\(\)\]'
+        EndAnchor   = '^\$ErrorActionPreference'
+        SnippetPath = Join-Path $ScriptDir 'snippets/create-new-feature-params.ps1'
+        Name        = 'create-new-feature.ps1 — params: add -GitFlow switch'
+    },
+    @{
+        FilePath    = $createFeatureScript
+        # Help text block — updated usage / options / examples for Git Flow.
+        StartAnchor = '^if \(\$Help\)'
+        EndAnchor   = '^# Check if feature description provided'
+        SnippetPath = Join-Path $ScriptDir 'snippets/create-new-feature-help.ps1'
+        Name        = 'create-new-feature.ps1 — help: Git Flow usage + examples'
+    },
+    @{
+        FilePath    = $createFeatureScript
+        # Branch generation: adds GitFlow if/else while preserving Timestamp/DryRun paths.
+        # Ends at the $featureDir line (not including it) so truncation stays in the patch.
+        StartAnchor = '^# Generate branch name'
+        EndAnchor   = '^\$featureDir = Join-Path \$specsDir \$branchName'
+        SnippetPath = Join-Path $ScriptDir 'snippets/create-new-feature-branch-generation.ps1'
+        Name        = 'create-new-feature.ps1 — branch generation: Git Flow mode + Timestamp/DryRun preserved'
+    },
+    @{
+        FilePath    = $createFeatureScript
+        # After $featureDir captures the short-name specs dir, reassign $branchName to
+        # the full feature/ prefix so the downstream git checkout creates the right branch.
+        StartAnchor = '^\$featureDir = Join-Path \$specsDir \$branchName$'
+        EndAnchor   = '^\$specFile = Join-Path \$featureDir'
+        SnippetPath = Join-Path $ScriptDir 'snippets/create-new-feature-featuredir-gitflow.ps1'
+        Name        = 'create-new-feature.ps1 — featureDir: redirect branchName to feature/ for git checkout'
     }
 )
 
