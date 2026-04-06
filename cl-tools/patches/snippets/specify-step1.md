@@ -1,0 +1,15 @@
+1. **Determine the feature short name**:
+   - **Check if the user provided a `short-name:` parameter** in their input (e.g., `short-name: DATA-5200-Feature-name`)
+     - Parse the value after `short-name:` and use it **exactly as provided** — do not modify, lowercase, reformat, or add numeric prefixes
+     - This name maps to a Jira ticket and will be used for both the git branch (`feature/<short-name>`) and the spec folder (`specs/<short-name>/`)
+   - **If no `short-name:` is provided**, generate a concise short name (2-4 words) for the branch:
+     - Analyze the feature description and extract the most meaningful keywords
+     - Create a 2-4 word short name that captures the essence of the feature
+     - Use action-noun format when possible (e.g., "add-user-auth", "fix-payment-bug")
+     - Preserve technical terms and acronyms (OAuth2, API, JWT, etc.)
+     - Keep it concise but descriptive enough to understand the feature at a glance
+     - Examples:
+       - "I want to add user authentication" → "user-auth"
+       - "Implement OAuth2 integration for the API" → "oauth2-api-integration"
+       - "Create a dashboard for analytics" → "analytics-dashboard"
+       - "Fix payment processing timeout bug" → "fix-payment-timeout"

@@ -17,6 +17,7 @@ dependencies = [
 
 [project.scripts]
 specify = "specify_cli:main"
+speckit = "specify_cli.cl_commands:main"
 
 [build-system]
 requires = ["hatchling"]
@@ -39,6 +40,9 @@ packages = ["src/specify_cli"]
 "templates/commands" = "specify_cli/core_pack/commands"
 "scripts/bash" = "specify_cli/core_pack/scripts/bash"
 "scripts/powershell" = "specify_cli/core_pack/scripts/powershell"
+# CL custom tools (patches + extras bundled for wheel-based installs)
+"cl-tools/patches" = "specify_cli/cl_pack/patches"
+"cl-tools/extras"  = "specify_cli/cl_pack/extras"
 
 [project.optional-dependencies]
 test = [

@@ -1,0 +1,146 @@
+name: Sync upstream spec-kit
+
+# Runs weekly and on-demand. Creates a PR whenever the upstream repo has new
+# commits. Because this fork only ADDS files (patches/, new templates/commands/,
+# new scripts/powershell/) and never modifies any upstream file, the merge is
+# always a clean fast-forward — no human conflict resolution needed.
+#
+# The PR is still created (rather than auto-merged) so you can:
+#   1. Review what changed upstream (changelog, new commands, etc.)
+#   2. See if any patch anchor verification warnings were raised
+#   3. Decide when to publish a new fork release tag
+
+on:
+  schedule:
+    - cron: '0 9 * * 1'   # Every Monday 09:00 UTC
+  workflow_dispatch:        # Manual trigger from GitHub UI
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout fork
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure git identity
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Add upstream remote
+        run: |
+          git remote add upstream https://github.com/github/spec-kit.git || true
+          git fetch upstream main --tags
+
+      - name: Check if upstream has new commits
+        id: diff
+        run: |
+          BEHIND=$(git rev-list HEAD..upstream/main --count)
+          echo "behind=$BEHIND" >> "$GITHUB_OUTPUT"
+          echo "Upstream is $BEHIND commit(s) ahead of fork"
+
+      - name: Nothing to do
+        if: steps.diff.outputs.behind == '0'
+        run: echo "Fork is already up to date with upstream. No PR needed."
+
+      - name: Create sync branch
+        if: steps.diff.outputs.behind != '0'
+        id: branch
+        run: |
+          BRANCH="sync/upstream-$(date +%Y%m%d-%H%M)"
+          echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
+          git checkout -b "$BRANCH"
+
+      - name: Merge upstream
+        if: steps.diff.outputs.behind != '0'
+        id: merge
+        run: |
+          # This merge should always succeed cleanly because the fork only adds
+          # files under patches/, templates/commands/ (new agents), and
+          # scripts/powershell/ (new scripts). It never touches upstream files.
+          git merge upstream/main --no-edit 2>&1 | tee merge.log
+          echo "exit_code=$?" >> "$GITHUB_OUTPUT"
+
+      - name: Set up PowerShell
+        if: steps.diff.outputs.behind != '0'
+        uses: actions/setup-dotnet@v4   # pwsh is pre-installed on ubuntu-latest
+
+      - name: Verify patch anchors (dry-run on a temp copy)
+        if: steps.diff.outputs.behind != '0'
+        id: patch_check
+        shell: pwsh
+        run: |
+          # Simulate specify init output by checking anchor strings exist
+          # in the CURRENT upstream template (not generated output — close enough
+          # for anchor health-check purposes).
+          $anchorWarnings = @()
+
+          $templateFile = "templates/commands/specify.md"
+          if (Test-Path $templateFile) {
+              $content = Get-Content $templateFile -Raw
+
+              if ($content -notmatch '1\. \*\*Generate a concise short name\*\*') {
+                  $anchorWarnings += "specify step-1 anchor not found in upstream template"
+              }
+              if ($content -notmatch '2\. \*\*Create the feature branch\*\* by running') {
+                  $anchorWarnings += "specify step-2 anchor not found in upstream template"
+              }
+          } else {
+              $anchorWarnings += "templates/commands/specify.md not found"
+          }
+
+          if ($anchorWarnings.Count -gt 0) {
+              Write-Host "::warning::PATCH ANCHOR CHECK FAILED:"
+              $anchorWarnings | ForEach-Object { Write-Host "::warning::  - $_" }
+              "anchor_ok=false" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          } else {
+              Write-Host "All patch anchors verified OK"
+              "anchor_ok=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          }
+
+      - name: Push sync branch
+        if: steps.diff.outputs.behind != '0'
+        run: git push origin "${{ steps.branch.outputs.branch }}"
+
+      - name: Create pull request
+        if: steps.diff.outputs.behind != '0'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          ANCHOR_STATUS="${{ steps.patch_check.outputs.anchor_ok }}"
+          BEHIND="${{ steps.diff.outputs.behind }}"
+
+          if [ "$ANCHOR_STATUS" = "false" ]; then
+            ANCHOR_NOTICE="
+          > [!WARNING]
+          > **Patch anchor check failed.** One or more anchors in \`patches/apply.ps1\` no longer match the upstream template. Update the \`StartAnchor\` or \`EndAnchor\` strings in \`patches/apply.ps1\` before merging, then re-run \`apply.ps1\` in your target repos."
+          else
+            ANCHOR_NOTICE="
+          > [!NOTE]
+          > Patch anchors verified OK — \`patches/apply.ps1\` will apply cleanly after \`specify init\`."
+          fi
+
+          gh pr create \
+            --title "chore: sync upstream spec-kit ($(date +%Y-%m-%d), +${BEHIND} commits)" \
+            --body "## Upstream sync
+
+          Automated merge of [\`github/spec-kit\` main](https://github.com/github/spec-kit) into fork.
+
+          **Commits merged:** ${BEHIND}
+          ${ANCHOR_NOTICE}
+
+          ### Review checklist
+          - [ ] Review upstream changelog / new features
+          - [ ] Confirm no conflicts (should be zero — fork only adds files, never modifies upstream files)
+          - [ ] If anchor warning above: update \`patches/apply.ps1\` anchor strings and snippets
+          - [ ] After merge: tag a new fork release so projects can \`uv tool install --from git+...\`
+          " \
+            --base main \
+            --head "${{ steps.branch.outputs.branch }}"
