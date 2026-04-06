@@ -15,10 +15,20 @@ function Get-ParallelWorktreeSuffixes {
 function Get-ParallelWorktreePathMap {
     [CmdletBinding()]
     param(
-        [string]$ClPath = 'C:\Projects\Eclypsium\VLS.Cloud.CL',
-        [string]$CpPath = 'C:\Projects\Eclypsium\VLS.Cloud.CP',
-        [string]$CgPath = 'C:\Projects\Eclypsium\VLS.Cloud.CG'
+        [Parameter(Mandatory = $true)]
+        [string]$RepoRoot,
+
+        [string]$ClPath = '',
+        [string]$CpPath = '',
+        [string]$CgPath = ''
     )
+
+    $repoName = Split-Path $RepoRoot -Leaf
+    $parentDir = Split-Path $RepoRoot -Parent
+
+    if (-not $ClPath) { $ClPath = Join-Path $parentDir "$repoName.CL" }
+    if (-not $CpPath) { $CpPath = Join-Path $parentDir "$repoName.CP" }
+    if (-not $CgPath) { $CgPath = Join-Path $parentDir "$repoName.CG" }
 
     return @{
         CL = [System.IO.Path]::GetFullPath($ClPath)
@@ -222,9 +232,9 @@ function Invoke-ParallelWorktreeBootstrap {
         [ValidateSet(2, 3)]
         [int]$Count,
 
-        [string]$ClPath = 'C:\Projects\Eclypsium\VLS.Cloud.CL',
-        [string]$CpPath = 'C:\Projects\Eclypsium\VLS.Cloud.CP',
-        [string]$CgPath = 'C:\Projects\Eclypsium\VLS.Cloud.CG'
+        [string]$ClPath = '',
+        [string]$CpPath = '',
+        [string]$CgPath = ''
     )
 
     if (-not (Test-Path (Join-Path $RepoRoot '.git'))) {
@@ -232,7 +242,7 @@ function Invoke-ParallelWorktreeBootstrap {
     }
 
     $baseBranch = Get-GitCurrentBranch -RepoRoot $RepoRoot
-    $paths = Get-ParallelWorktreePathMap -ClPath $ClPath -CpPath $CpPath -CgPath $CgPath
+    $paths = Get-ParallelWorktreePathMap -RepoRoot $RepoRoot -ClPath $ClPath -CpPath $CpPath -CgPath $CgPath
     $suffixes = Get-ParallelWorktreeSuffixes -Count $Count
     $registeredWorktrees = Get-GitWorktrees -RepoRoot $RepoRoot
     $created = @()
