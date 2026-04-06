@@ -136,21 +136,22 @@ jobs:
               "anchor_ok=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
           }
 
-      - name: "[A] Compute CL tag"
+      - name: "[A] Compute CL tag from vcl* version"
         if: steps.detect.outputs.new_release == 'true' && steps.rebase.outputs.failed == 'false'
         id: cl_tag
         run: |
           UPSTREAM_TAG="${{ steps.detect.outputs.latest_upstream_tag }}"
-          # Find highest existing cl tag for this upstream version, increment
-          EXISTING=$(git tag --list "${UPSTREAM_TAG}-cl*" \
-            | grep -oP 'cl\K[0-9]+' | sort -n | tail -1)
-          if [ -z "$EXISTING" ]; then
-            CL_TAG="${UPSTREAM_TAG}-cl1"
-          else
-            CL_TAG="${UPSTREAM_TAG}-cl$((EXISTING + 1))"
+          # The CL version is the latest vcl* tag — independent of upstream versioning
+          CL_VERSION=$(git tag --list 'vcl*' --sort=-version:refname | head -1)
+          if [ -z "$CL_VERSION" ]; then
+            echo "::error::No vcl* tag found. Create one first: git tag vcl1 && git push origin vcl1"
+            exit 1
           fi
+          # vcl1.1 → cl1.1
+          CL_SUFFIX="${CL_VERSION#v}"
+          CL_TAG="${UPSTREAM_TAG}-${CL_SUFFIX}"
           echo "cl_tag=$CL_TAG" >> "$GITHUB_OUTPUT"
-          echo "Computed CL tag: $CL_TAG"
+          echo "Computed CL tag: $CL_TAG (CL version: $CL_VERSION)"
 
       - name: "[A] Push cl/main and tag — triggers release-cl.yml"
         if: steps.detect.outputs.new_release == 'true' && steps.rebase.outputs.failed == 'false'

@@ -1,0 +1,73 @@
+name: Tag CL Release
+
+# Triggered when you push a vcl* tag (e.g. vcl1, vcl1.1, vcl1.2).
+#
+# Finds the current upstream release version from main and creates the
+# combined release tag (e.g. v0.5.1-cl1.1) which then triggers release-cl.yml.
+#
+# Usage:
+#   git tag vcl1.1          # after making CL-only changes
+#   git push origin vcl1.1  # this workflow fires → creates v0.5.1-cl1.1 release
+
+on:
+  push:
+    tags:
+      - 'vcl*'
+
+permissions:
+  contents: write
+
+jobs:
+  tag:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout cl/main
+        uses: actions/checkout@v4
+        with:
+          ref: cl/main
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure git identity
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Get CL version from pushed tag
+        id: cl_version
+        run: |
+          CL_VERSION="${GITHUB_REF#refs/tags/}"   # e.g. vcl1.1
+          CL_SUFFIX="${CL_VERSION#v}"              # e.g. cl1.1
+          echo "cl_version=$CL_VERSION" >> "$GITHUB_OUTPUT"
+          echo "cl_suffix=$CL_SUFFIX" >> "$GITHUB_OUTPUT"
+          echo "CL version: $CL_VERSION → suffix: $CL_SUFFIX"
+
+      - name: Find current upstream release tag from main
+        id: upstream
+        run: |
+          git fetch origin main --tags
+          # Latest v* tag that is not a CL tag and not a vcl* tag
+          UPSTREAM_TAG=$(git tag --list 'v*' --sort=-version:refname \
+            | grep -v -- '-cl' \
+            | grep -v '^vcl' \
+            | head -1)
+          if [ -z "$UPSTREAM_TAG" ]; then
+            echo "::error::No upstream v* tag found. Ensure main is synced with upstream."
+            exit 1
+          fi
+          echo "upstream_tag=$UPSTREAM_TAG" >> "$GITHUB_OUTPUT"
+          echo "Current upstream: $UPSTREAM_TAG"
+
+      - name: Create and push combined release tag
+        run: |
+          UPSTREAM_TAG="${{ steps.upstream.outputs.upstream_tag }}"
+          CL_SUFFIX="${{ steps.cl_version.outputs.cl_suffix }}"
+          COMBINED="${UPSTREAM_TAG}-${CL_SUFFIX}"
+          echo "Creating combined tag: $COMBINED"
+          git tag "$COMBINED"
+          git push origin "$COMBINED"
+          echo "### CL release tagged: \`${COMBINED}\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Tag \`${COMBINED}\` pushed — \`release-cl.yml\` will build and publish the release." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Install:** \`uv tool install specify-cli --force --from git+https://github.com/nzscout/spec-cat.git@${COMBINED}\`" >> $GITHUB_STEP_SUMMARY

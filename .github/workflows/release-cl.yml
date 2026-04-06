@@ -34,8 +34,8 @@ jobs:
         id: versions
         run: |
           CL_TAG="${GITHUB_REF#refs/tags/}"
-          # Strip -clN suffix to get the upstream tag
-          UPSTREAM_TAG=$(echo "$CL_TAG" | sed 's/-cl[0-9]*$//')
+          # Strip -cl* suffix to get the upstream tag (handles cl1, cl1.1, cl1.2)
+          UPSTREAM_TAG=$(echo "$CL_TAG" | sed 's/-cl[0-9][0-9.]*$//')
           echo "cl_tag=$CL_TAG" >> "$GITHUB_OUTPUT"
           echo "upstream_tag=$UPSTREAM_TAG" >> "$GITHUB_OUTPUT"
           echo "CL tag: $CL_TAG  |  Upstream tag: $UPSTREAM_TAG"
