@@ -1,14 +1,18 @@
 name: Sync upstream spec-kit
 
-# Runs weekly and on-demand. Creates a PR whenever the upstream repo has new
-# commits. Because this fork only ADDS files (patches/, new templates/commands/,
-# new scripts/powershell/) and never modifies any upstream file, the merge is
-# always a clean fast-forward — no human conflict resolution needed.
+# Runs weekly and on-demand.
 #
-# The PR is still created (rather than auto-merged) so you can:
-#   1. Review what changed upstream (changelog, new commands, etc.)
-#   2. See if any patch anchor verification warnings were raised
-#   3. Decide when to publish a new fork release tag
+# Branch model:
+#   main     — clean mirror of upstream github/spec-kit. Never has custom code.
+#   cl/main  — CL customizations rebased on top of main. This is the install branch.
+#
+# What this workflow does:
+#   1. Fast-forward `main` to upstream/main (never conflicts — no custom code on main)
+#   2. Rebase `cl/main` onto updated `main`
+#   3. If there were upstream changes, create a PR from a `sync/upstream-*` branch
+#      against `cl/main` so changes can be reviewed before cl/main is updated.
+#
+# Install command: uv tool install specify-cli --from git+https://github.com/nzscout/spec-cat.git@cl/main
 
 on:
   schedule:
@@ -23,9 +27,10 @@ jobs:
   sync:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout fork
+      - name: Checkout fork (cl/main)
         uses: actions/checkout@v4
         with:
+          ref: cl/main
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
 
@@ -34,52 +39,45 @@ jobs:
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-      - name: Add upstream remote
+      - name: Add upstream remote and fetch
         run: |
           git remote add upstream https://github.com/github/spec-kit.git || true
           git fetch upstream main --tags
+          git fetch origin main
 
       - name: Check if upstream has new commits
         id: diff
         run: |
-          BEHIND=$(git rev-list HEAD..upstream/main --count)
+          BEHIND=$(git rev-list origin/main..upstream/main --count)
           echo "behind=$BEHIND" >> "$GITHUB_OUTPUT"
-          echo "Upstream is $BEHIND commit(s) ahead of fork"
+          echo "Upstream is $BEHIND commit(s) ahead of fork main"
 
       - name: Nothing to do
         if: steps.diff.outputs.behind == '0'
-        run: echo "Fork is already up to date with upstream. No PR needed."
+        run: echo "Fork main is already up to date with upstream. No PR needed."
 
-      - name: Create sync branch
+      - name: Fast-forward origin/main to upstream/main
+        if: steps.diff.outputs.behind != '0'
+        run: |
+          git checkout main
+          git reset --hard upstream/main
+          git push origin main
+          git checkout cl/main
+
+      - name: Create sync branch off cl/main and rebase onto updated main
         if: steps.diff.outputs.behind != '0'
         id: branch
         run: |
           BRANCH="sync/upstream-$(date +%Y%m%d-%H%M)"
           echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
           git checkout -b "$BRANCH"
-
-      - name: Merge upstream
-        if: steps.diff.outputs.behind != '0'
-        id: merge
-        run: |
-          # This merge should always succeed cleanly because the fork only adds
-          # files under patches/, templates/commands/ (new agents), and
-          # scripts/powershell/ (new scripts). It never touches upstream files.
-          git merge upstream/main --no-edit 2>&1 | tee merge.log
-          echo "exit_code=$?" >> "$GITHUB_OUTPUT"
-
-      - name: Set up PowerShell
-        if: steps.diff.outputs.behind != '0'
-        uses: actions/setup-dotnet@v4   # pwsh is pre-installed on ubuntu-latest
+          git rebase origin/main
 
       - name: Verify patch anchors (dry-run on a temp copy)
         if: steps.diff.outputs.behind != '0'
         id: patch_check
         shell: pwsh
         run: |
-          # Simulate specify init output by checking anchor strings exist
-          # in the CURRENT upstream template (not generated output — close enough
-          # for anchor health-check purposes).
           $anchorWarnings = @()
 
           $templateFile = "templates/commands/specify.md"
@@ -109,7 +107,7 @@ jobs:
         if: steps.diff.outputs.behind != '0'
         run: git push origin "${{ steps.branch.outputs.branch }}"
 
-      - name: Create pull request
+      - name: Create pull request into cl/main
         if: steps.diff.outputs.behind != '0'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -120,27 +118,32 @@ jobs:
           if [ "$ANCHOR_STATUS" = "false" ]; then
             ANCHOR_NOTICE="
           > [!WARNING]
-          > **Patch anchor check failed.** One or more anchors in \`patches/apply.ps1\` no longer match the upstream template. Update the \`StartAnchor\` or \`EndAnchor\` strings in \`patches/apply.ps1\` before merging, then re-run \`apply.ps1\` in your target repos."
+          > **Patch anchor check failed.** One or more anchors in \`cl-tools/patches/apply.ps1\` no longer match the upstream template. Update the \`StartAnchor\` or \`EndAnchor\` strings before merging, then re-run \`apply.ps1\` in your target repos."
           else
             ANCHOR_NOTICE="
           > [!NOTE]
-          > Patch anchors verified OK — \`patches/apply.ps1\` will apply cleanly after \`specify init\`."
+          > Patch anchors verified OK — \`cl-tools/patches/apply.ps1\` will apply cleanly after \`specify init\`."
           fi
 
           gh pr create \
             --title "chore: sync upstream spec-kit ($(date +%Y-%m-%d), +${BEHIND} commits)" \
             --body "## Upstream sync
 
-          Automated merge of [\`github/spec-kit\` main](https://github.com/github/spec-kit) into fork.
+          Automated rebase of \`cl/main\` onto updated [\`github/spec-kit\` main](https://github.com/github/spec-kit).
 
           **Commits merged:** ${BEHIND}
           ${ANCHOR_NOTICE}
 
+          ### What happened
+          - \`main\` was fast-forwarded to \`upstream/main\` (clean mirror, no custom code)
+          - \`cl/main\` customizations were rebased onto the updated \`main\`
+          - This PR targets \`cl/main\` — merge it to complete the update
+
           ### Review checklist
           - [ ] Review upstream changelog / new features
-          - [ ] Confirm no conflicts (should be zero — fork only adds files, never modifies upstream files)
-          - [ ] If anchor warning above: update \`patches/apply.ps1\` anchor strings and snippets
-          - [ ] After merge: tag a new fork release so projects can \`uv tool install --from git+...\`
+          - [ ] Confirm rebase applied cleanly (no conflicts expected — CL files don't overlap upstream files)
+          - [ ] If anchor warning above: update \`cl-tools/patches/apply.ps1\` anchor strings and snippets
+          - [ ] After merge: tag a new fork release so projects can pin to a version
           " \
-            --base main \
+            --base cl/main \
             --head "${{ steps.branch.outputs.branch }}"
