@@ -99,6 +99,8 @@ if ($SkipExtras) {
         '.github/agents/context7.agent.md'
         '.github/prompts/speckit.reconcile-code.prompt.md'
         '.github/prompts/speckit.reconcile-spec.prompt.md'
+        '.github/prompts/speckat.bootstrap-worktrees.prompt.md'
+        '.github/prompts/speckat.git-commit.prompt.md'
         '.specify/memory/constitution.dotnet.md'
         '.specify/memory/go-constitution.md'
     )
