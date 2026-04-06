@@ -42,17 +42,26 @@ jobs:
           echo "cl_suffix=$CL_SUFFIX" >> "$GITHUB_OUTPUT"
           echo "CL version: $CL_VERSION → suffix: $CL_SUFFIX"
 
-      - name: Find current upstream release tag from main
+      - name: Find current upstream release tag
         id: upstream
         run: |
-          git fetch origin main --tags
-          # Latest v* tag that is not a CL tag and not a vcl* tag
-          UPSTREAM_TAG=$(git tag --list 'v*' --sort=-version:refname \
-            | grep -v -- '-cl' \
-            | grep -v '^vcl' \
-            | head -1)
+          # Primary: derive from pyproject.toml (always present, no tag dependency).
+          # Strip any trailing .devN / .postN / .aN / .bN / .rcN pre-release segment.
+          RAW_VERSION=$(grep '^version' pyproject.toml | head -1 | sed 's/.*= *"//;s/".*//')
+          BASE_VERSION=$(echo "$RAW_VERSION" | sed 's/\.\(dev\|post\|a\|b\|rc\)[0-9]*$//')
+          UPSTREAM_TAG="v${BASE_VERSION}"
+
+          # Sanity-check: must look like vX.Y.Z
+          if ! echo "$UPSTREAM_TAG" | grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+'; then
+            echo "::warning::Could not parse version from pyproject.toml ('$RAW_VERSION'). Falling back to git tags."
+            git fetch origin --tags --quiet
+            UPSTREAM_TAG=$(git tag --list 'v*' --sort=-version:refname \
+              | grep -Ev -- '(-cl|^vcl)' \
+              | head -1)
+          fi
+
           if [ -z "$UPSTREAM_TAG" ]; then
-            echo "::error::No upstream v* tag found. Ensure main is synced with upstream."
+            echo "::error::Could not determine upstream version. Check pyproject.toml version field."
             exit 1
           fi
           echo "upstream_tag=$UPSTREAM_TAG" >> "$GITHUB_OUTPUT"
