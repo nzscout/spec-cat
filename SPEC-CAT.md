@@ -273,7 +273,17 @@ To add a new extra file:
    - Prompt files → `cl-tools/extras/.github/prompts/`
    - Memory files → `cl-tools/extras/.specify/memory/`
 
-2. **Register it** in the `$extras` array in `cl-tools/post-init.ps1`:
+2. **Register it in two places** — the extras list exists in both the Python CLI and the PowerShell fallback script. Both must be updated together:
+
+   **`src/specify_cli/cl_commands.py`** — `_copy_extras()` function (used by the installed `speckit` CLI):
+   ```python
+   entries = [
+       # ... existing entries ...
+       ".github/prompts/my-new-prompt.prompt.md",   # ← add here
+   ]
+   ```
+
+   **`cl-tools/post-init.ps1`** — `$extras` array (legacy PowerShell path):
    ```powershell
    $extras = @(
        # ... existing entries ...
@@ -284,7 +294,7 @@ To add a new extra file:
 
 3. **Update SPEC-CAT.md** — add the file to the "Extra agent files" table and the "What gets created" tree.
 
-> **Common mistake**: adding a file to `cl-tools/extras/` but forgetting to register it in `$extras`. The file will be silently skipped during `speckit init`.
+> **Common mistake**: adding a file to `cl-tools/extras/` but forgetting to register it in one or both lists above. The file will be silently skipped during `speckit init`.
 
 ### Parallel worktrees scripts
 
