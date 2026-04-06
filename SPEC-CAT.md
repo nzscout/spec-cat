@@ -42,8 +42,8 @@ All upstream functionality is preserved unchanged. CL additions live entirely in
 | `.github/agents/speckit.comparer-spec.agent.md` | Reconciles two spec artifact sets |
 | `.github/agents/context7.agent.md` | Up-to-date library docs via Context7 |
 | `.github/prompts/speckit.reconcile-code.prompt.md` | Reconcile code prompt |
-| `.github/prompts/speckit.reconcile-spec.prompt.md` | Reconcile spec prompt |
-| `.specify/memory/constitution.dotnet.md` | .NET constitution template |
+| `.github/prompts/speckit.reconcile-spec.prompt.md` | Reconcile spec prompt || `.github/prompts/speckat.bootstrap-worktrees.prompt.md` | Bootstrap parallel worktrees prompt |
+| `.github/prompts/speckat.git-commit.prompt.md` | Speckit-style git commit prompt || `.specify/memory/constitution.dotnet.md` | .NET constitution template |
 | `.specify/memory/go-constitution.md` | Go constitution template |
 
 ---
@@ -106,17 +106,19 @@ After `speckit init` in a new directory (in addition to everything `specify init
 ```
 .github/
   agents/
-    speckit.reviewer-code.agent.md   ← code review agent
-    speckit.comparer-code.agent.md   ← implementation comparer
-    speckit.comparer-spec.agent.md   ← spec reconciler
-    context7.agent.md                ← library docs agent
+    speckit.reviewer-code.agent.md           ← code review agent
+    speckit.comparer-code.agent.md           ← implementation comparer
+    speckit.comparer-spec.agent.md           ← spec reconciler
+    context7.agent.md                        ← library docs agent
   prompts/
     speckit.reconcile-code.prompt.md
     speckit.reconcile-spec.prompt.md
+    speckat.bootstrap-worktrees.prompt.md    ← parallel worktree bootstrap
+    speckat.git-commit.prompt.md             ← git commit helper
 .specify/
   memory/
-    constitution.dotnet.md           ← .NET constitution template
-    go-constitution.md               ← Go constitution template
+    constitution.dotnet.md                   ← .NET constitution template
+    go-constitution.md                       ← Go constitution template
 ```
 
 The `speckit.specify` agent also gets two extra workflow steps injected:
@@ -259,6 +261,44 @@ uv tool run ruff check src/
 uv run speckit --help
 uv run speckit init --dry-run
 ```
+
+### Adding new extras
+
+Extras are files copied once into a project by Phase 2 of `post-init.ps1`. Existing project files are never overwritten.
+
+To add a new extra file:
+
+1. **Add the source file** to `cl-tools/extras/` under the same relative path it should land in the target project.
+   - Agent files → `cl-tools/extras/.github/agents/`
+   - Prompt files → `cl-tools/extras/.github/prompts/`
+   - Memory files → `cl-tools/extras/.specify/memory/`
+
+2. **Register it** in the `$extras` array in `cl-tools/post-init.ps1`:
+   ```powershell
+   $extras = @(
+       # ... existing entries ...
+       '.github/prompts/my-new-prompt.prompt.md'   # ← add here
+   )
+   ```
+   The relative path must match exactly — source is resolved under `cl-tools/extras/`, destination under the project root.
+
+3. **Update SPEC-CAT.md** — add the file to the "Extra agent files" table and the "What gets created" tree.
+
+> **Common mistake**: adding a file to `cl-tools/extras/` but forgetting to register it in `$extras`. The file will be silently skipped during `speckit init`.
+
+### Parallel worktrees scripts
+
+The `cl-tools/scripts/powershell/` directory contains helpers for parallel SDD workflows:
+
+| Script | Purpose |
+|--------|---------|
+| `create-parallel-worktrees.ps1` | Entry point — creates feature branches + worktrees |
+| `parallel-worktrees.ps1` | Core library (functions only, no side effects) |
+| `common.ps1` | Not included here — sourced from the deployed `.specify/scripts/powershell/common.ps1` at runtime |
+
+Worktree paths are derived automatically as siblings of the current repo directory with `.CL`, `.CP`, `.CG` suffixes (e.g. `D:\Work\MyProject` → `D:\Work\MyProject.CL`). Override with `-ClPath`/`-CpPath`/`-CgPath` when needed.
+
+These scripts are **not** currently deployed by `speckit init` — they are intended to be placed manually (or via a future `specify preset`) into `.specify/scripts/powershell/` of the target project.
 
 ### Testing `speckit init` end-to-end
 
