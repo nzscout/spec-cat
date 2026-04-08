@@ -91,22 +91,17 @@ if ($SkipExtras) {
     Write-Host "Phase 2 — extras (skipped via -SkipExtras)"
 } else {
     Write-Host ""
-    Write-Host "Phase 2 — extras (copy-once; existing files are never overwritten)"
-    Write-Host "--------------------------------------------------------------------"
+    Write-Host "Phase 2 — extras (always overwritten to stay current)"
+    Write-Host "------------------------------------------------------"
 
     $copied  = 0
-    $skipped = 0
+    $updated = 0
 
     Get-ChildItem -Path $ExtrasDir -Recurse -File | Sort-Object FullName | ForEach-Object {
         $srcPath = $_.FullName
         $rel     = $srcPath.Substring($ExtrasDir.Length).TrimStart('\', '/')
         $dstPath = Join-Path $ProjectRoot $rel
-
-        if (Test-Path $dstPath) {
-            Write-Host "  [SKIP]  $rel (already exists)"
-            $skipped++
-            return
-        }
+        $isUpdate = Test-Path $dstPath
 
         $dstDir = Split-Path $dstPath -Parent
         if (-not (Test-Path $dstDir)) {
@@ -114,16 +109,22 @@ if ($SkipExtras) {
         }
 
         if ($PSCmdlet.ShouldProcess($dstPath, "copy extra")) {
-            Copy-Item $srcPath $dstPath
-            Write-Host "  [OK]    $rel"
-            $copied++
+            Copy-Item $srcPath $dstPath -Force
+            if ($isUpdate) {
+                Write-Host "  [UP]    $rel"
+                $updated++
+            } else {
+                Write-Host "  [OK]    $rel"
+                $copied++
+            }
         } else {
-            Write-Host "  [DRY]   $rel (would copy)"
+            $verb = if ($isUpdate) { 'would overwrite' } else { 'would copy' }
+            Write-Host "  [DRY]   $rel ($verb)"
         }
     }
 
     Write-Host ""
-    Write-Host "  Extras summary: $copied copied, $skipped already existed"
+    Write-Host "  Extras summary: $copied new, $updated updated"
 }
 
 Write-Host ""

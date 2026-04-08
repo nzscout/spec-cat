@@ -72,19 +72,20 @@ def _copy_extras(project_root: Path, dry_run: bool) -> tuple[int, int, int]:
             continue
         rel = src.relative_to(extras_root)
         dst = project_root / rel
-
-        if dst.exists():
-            console.print(f"  [dim][SKIP] {rel}[/dim]")
-            skipped += 1
-            continue
+        is_update = dst.exists()
 
         if dry_run:
-            console.print(f"  [cyan][DRY]  {rel} (would copy)[/cyan]")
+            label = "[DRY-U]" if is_update else "[DRY]  "
+            console.print(f"  [cyan]{label} {rel} (would {'overwrite' if is_update else 'copy'})[/cyan]")
         else:
             dst.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(src, dst)
-            console.print(f"  [green][OK]   {rel}[/green]")
-        copied += 1
+            label = "[UP]  " if is_update else "[OK]  "
+            console.print(f"  [green]{label} {rel}[/green]")
+        if is_update:
+            skipped += 1  # reuse skipped counter as "updated" for summary
+        else:
+            copied += 1
 
     return copied, skipped, 0
 
@@ -131,7 +132,7 @@ def init(
     else:
         console.print("[bold]Phase 3 — extras[/bold]")
         copied, skipped, missing = _copy_extras(root, dry_run=dry_run)
-        console.print(f"  {copied} copied, {skipped} already existed")
+        console.print(f"  {copied} new, {skipped} updated")
 
     console.rule("[bold green]Done[/bold green]")
 
