@@ -1,0 +1,179 @@
+# Example 1 — User Notification Preferences
+# This is the structured YAML output an LLM produces in response to speckat.compare-code.prompt.md.
+# A renderer converts it to the companion .md file.
+
+report:
+  meta:
+    team_cl_feature_path: "specs/2025-11/notification-preferences"
+    team_cp_feature_path: "specs/2025-11/notification-preferences"
+    canonical_base_branch: "main"
+    product_docs:
+      - "docs/product/notifications-prd.md"
+    generated_at: "2026-04-08T09:15:00Z"
+    reviewed_by_llm: "claude-opus-4"
+
+  executive_recommendation:
+    preferred_team: "Team-CP"
+    hybrid_base: null
+    summary: >
+      Team-CP is the preferred foundation. Its per-channel JSONB preference model
+      correctly implements the spec, covers all acceptance criteria including digest
+      mode, and its migration safely backfills existing users. Team-CL's per-category
+      boolean schema deviates from the spec and cannot be corrected without a
+      breaking data migration. Team-CL's test factories are the only cherry-pick.
+
+  comparison_matrix:
+    - criterion: "PRD Alignment"
+      team_cl: { score: "Medium", notes: "Category boolean model conflicts with PRD per-channel model; digest mode missing." }
+      team_cp: { score: "High", notes: "All PRD requirements implemented including digest mode and unsubscribe flow." }
+    - criterion: "Speckit Alignment"
+      team_cl: { score: "Low", notes: "Data model deviates from spec; tasks.md marks digest mode done but it is not implemented." }
+      team_cp: { score: "High", notes: "Spec faithfully implemented; tasks.md is accurate." }
+    - criterion: "Correctness"
+      team_cl: { score: "Medium", notes: "Opt-out logic inverted for in-app notifications (F-1)." }
+      team_cp: { score: "High", notes: "All acceptance criteria verified passing." }
+    - criterion: "Completeness"
+      team_cl: { score: "Medium", notes: "Digest mode not implemented; unsubscribe confirmation email missing." }
+      team_cp: { score: "High", notes: "All acceptance criteria implemented." }
+    - criterion: "Code Quality"
+      team_cl: { score: "Medium", notes: "notification_settings.rb is 320 lines mixing service and controller concerns." }
+      team_cp: { score: "High", notes: "Clean service layer; thin controller; well-separated concerns." }
+    - criterion: "Tests"
+      team_cl: { score: "High", notes: "Strong factory helpers; 94% line coverage on changed files." }
+      team_cp: { score: "Medium", notes: "82% coverage; missing edge cases for malformed channel values in JSONB." }
+    - criterion: "Simplicity"
+      team_cl: { score: "Medium", notes: "Per-category booleans are simpler but implement the wrong model." }
+      team_cp: { score: "High", notes: "JSONB preferences column is idiomatic and naturally extensible." }
+    - criterion: "Robustness"
+      team_cl: { score: "Medium", notes: "Silent nil when a user has no preference row." }
+      team_cp: { score: "High", notes: "Nil-safe accessor returns spec-defined defaults when row is absent." }
+    - criterion: "Operational Readiness"
+      team_cl: { score: "Medium", notes: "Migration does not backfill existing users; silent failure for existing accounts." }
+      team_cp: { score: "High", notes: "Migration backfills all existing users with safe opt-in defaults." }
+    - criterion: "Merge Risk"
+      team_cl: { score: "High", notes: "Boolean schema requires breaking migration to align with spec; high rollback complexity." }
+      team_cp: { score: "Low", notes: "Self-contained; no breaking changes to existing behavior." }
+    - criterion: "Overall Quality"
+      team_cl: { score: "Medium", notes: "" }
+      team_cp: { score: "High", notes: "" }
+
+  alignment_findings:
+    - id: "AF-1"
+      requirement: "Preferences stored per notification channel (email, in-app, push)"
+      expected: "One preference record per user per channel with enabled and frequency fields"
+      team_cl_observation: "Stores per-category boolean flags (marketing_email, system_email) — does not match channel model"
+      team_cp_observation: "JSONB column on users table with channel keys — matches spec data model exactly"
+      impact: "High — Team-CL schema requires full data migration and re-implementation to conform"
+    - id: "AF-2"
+      requirement: "Digest mode: users choose immediate or daily_digest delivery per channel"
+      expected: "frequency field on preference record with values: immediate, daily_digest"
+      team_cl_observation: "Not implemented; tasks.md erroneously marks this task complete"
+      team_cp_observation: "Implemented as frequency field; UI toggle present and functional"
+      impact: "High — Team-CL tasks.md is misleading about implementation state"
+    - id: "AF-3"
+      requirement: "Unsubscribe link in notification emails redirects to preferences page with confirmation"
+      expected: "One-click unsubscribe updates preference and displays confirmation banner"
+      team_cl_observation: "Link present; redirects correctly; confirmation UI absent"
+      team_cp_observation: "Fully implemented including confirmation banner and flash message"
+      impact: "Medium — Team-CL is missing the confirmation step only"
+
+  team_cl:
+    tasks_md_status: "stale"
+    tasks_md_notes: >
+      Digest mode is marked complete at tasks.md:34 but no digest logic exists in the
+      codebase. Unsubscribe confirmation is marked complete at tasks.md:41 but the
+      confirmation UI is absent. Do not rely on this tasks.md for implementation state.
+    pros:
+      - "UserNotificationFactory and associated shared examples significantly reduce test setup boilerplate — cherry-pick candidate"
+      - "High test line coverage (94%) on changed files"
+      - "Clean migration rollback with explicit down block"
+    cons:
+      - "Per-category boolean schema deviates from spec-mandated per-channel model"
+      - "Opt-out logic inverted for in-app channel (F-1)"
+      - "Digest mode not implemented despite tasks.md claiming it done"
+      - "notification_settings.rb mixes service and controller responsibilities"
+      - "No fallback for users with no preference rows; silent nil propagates"
+
+  team_cp:
+    tasks_md_status: "current"
+    tasks_md_notes: "tasks.md accurately reflects implementation state. No discrepancies found."
+    pros:
+      - "Per-channel JSONB model is the correct implementation of the spec data model"
+      - "Nil-safe defaults accessor prevents silent failures for accounts without a preference row"
+      - "Full digest mode implementation present in both back-end and UI"
+      - "Migration backfills all existing users with safe opt-in defaults"
+      - "Clean service layer with no controller logic leakage"
+    cons:
+      - "Test coverage 82% — missing edge cases for malformed channel values in JSONB (F-2)"
+      - "No explicit down block in migration (F-3)"
+
+  findings:
+    - id: "F-1"
+      team: "Team-CL"
+      severity: "High"
+      category: "gap"
+      description: "Opt-out logic inverted for in-app notifications"
+      impact: "Users who opt out of in-app notifications continue receiving them"
+      evidence: "app/services/notification_settings.rb:87 — condition is `unless user.in_app_enabled`; should be `if user.in_app_enabled`"
+    - id: "F-2"
+      team: "Team-CP"
+      severity: "Medium"
+      category: "missing-test"
+      description: "No test coverage for malformed or unknown channel keys in JSONB preferences column"
+      impact: "Silent failure if an external system writes an unexpected channel key"
+      evidence: "spec/services/notification_preference_service_spec.rb — no invalid-channel test cases present"
+    - id: "F-3"
+      team: "Team-CP"
+      severity: "Low"
+      category: "debt"
+      description: "Migration 20251118_add_notification_preferences.rb has no down block"
+      impact: "Cannot roll back migration cleanly during a production incident"
+      evidence: "db/migrate/20251118_add_notification_preferences.rb:14 — down method absent"
+    - id: "F-4"
+      team: "Team-CL"
+      severity: "High"
+      category: "spec-drift"
+      description: "Per-category boolean schema deviates from spec-mandated per-channel model"
+      impact: "Full breaking data migration required to align with spec; high rollback risk"
+      evidence: "db/migrate/20251115_add_notification_booleans.rb compared with specs/2025-11/notification-preferences/data-model.md:22"
+    - id: "F-5"
+      team: "Team-CL"
+      severity: "High"
+      category: "gap"
+      description: "tasks.md marks digest mode complete; the feature is not implemented"
+      impact: "Misleading implementation state means reviewer cannot rely on tasks.md"
+      evidence: "specs/2025-11/notification-preferences/tasks.md:34 vs absence of digest logic anywhere in the branch"
+
+  cherry_picks:
+    - id: "C-1"
+      from_team: "Team-CL"
+      description: "Copy UserNotificationFactory and the :notifiable shared examples into Team-CP"
+      rationale: "Significantly reduces test setup boilerplate; Team-CP tests are noticeably more verbose without these helpers"
+      target_files:
+        - "spec/factories/user_notification_factory.rb"
+        - "spec/support/shared_examples/notifiable.rb"
+
+  remediation_plan:
+    - step: 1
+      description: "Add test cases for malformed and unknown JSONB channel keys in notification_preference_service_spec.rb (F-2)"
+      priority: "before-merge"
+      owner: "Team-CP"
+    - step: 2
+      description: "Add explicit down block to migration 20251118_add_notification_preferences.rb (F-3)"
+      priority: "before-merge"
+      owner: "Team-CP"
+    - step: 3
+      description: "Cherry-pick UserNotificationFactory and :notifiable shared examples from Team-CL (C-1)"
+      priority: "before-merge"
+      owner: "Team-CP"
+    - step: 4
+      description: "Verify tasks.md is current and accurate before opening the merge request"
+      priority: "before-merge"
+      owner: "Team-CP"
+
+  final_verdict: >
+    Team-CP is the correct foundation. The per-channel JSONB model faithfully implements
+    the spec, the migration is safe for production, digest mode is complete, and
+    tasks.md is accurate. The two required fixes before merge (missing tests, no rollback
+    block) are low-effort. Team-CL has stronger test infrastructure but an
+    irreconcilably wrong data model — cherry-pick the factories only and discard the rest.

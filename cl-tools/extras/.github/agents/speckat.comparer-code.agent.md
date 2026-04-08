@@ -113,3 +113,18 @@ Within a feature directory, you may find:
 - Contracts/schemas are production interfaces: keep them consistent with behavior and tests.
 - Acceptance should be test-backed where feasible; call out manual-only verification as risk.
 - If the two implementations interpret the spec differently, identify the ambiguity and propose a clarified spec update.
+
+---
+
+# Structured output contract
+
+Your final output MUST be a single fenced YAML block with no prose, headers, or commentary outside the fence. The YAML block is the complete and only output.
+
+- Do not write a markdown report.
+- Do not mix markdown and YAML.
+- Do not add a preamble, summary, or closing statement outside the fence.
+- Emit only the fenced YAML block.
+
+A rendering prompt (`speckat.compare-code.render`) converts the YAML to a formatted markdown report for human review. The consolidation agent consumes the YAML directly.
+
+The YAML must conform to the schema defined in the prompt's **Structured Output → YAML Schema** section. See `.specify/examples/speckat.compare-code.example-1.yaml` and `.specify/examples/speckat.compare-code.example-2.yaml` for complete worked examples.

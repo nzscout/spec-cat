@@ -200,64 +200,109 @@ Evaluate Team-CL and Team-CP against these priorities:
 8. Code quality, cohesion, and avoidance of unnecessary complexity
 9. Consistency between each implementation and the intended feature scope in the matching branch or worktree
 
-## Output Requirements
+## Structured Output
 
-Produce a clean, structured, actionable report. Prefer tables where they improve clarity.
+Emit your complete report as a single fenced YAML block. Do not write any prose, markdown headers, or commentary outside the fence. The YAML block is the complete and only output.
 
-The report must include:
+The consolidation agent and the human markdown renderer both consume this YAML directly. A separate rendering prompt (`speckat.compare-code.render`) converts it to a formatted markdown report for human review.
 
-1. An executive recommendation stating whether Team-CL or Team-CP should be the baseline to merge, or whether a hybrid is preferred with a clearly named base plus cherry-picks
-2. A scope-and-inputs summary that explicitly records the Team-CL feature path, Team-CP feature path, and canonical base branch used for the review
-3. A comparison table covering PRD Alignment, Speckit Alignment, correctness, completeness, code quality, tests, simplicity, robustness, operational readiness, merge risk, and overall quality
-4. A pros and cons section for Team-CL
-5. A pros and cons section for Team-CP
-6. An alignment findings table covering key requirement or contract checks, with a stable reference ID, expected behavior, branch observations, and impact
-7. A findings table listing implementation gaps, technical debt, anti-patterns, over-engineering, missing tests, and spec misalignment, with a stable reference ID, severity, impact, and evidence
-8. A cherry-pick table describing exactly what should be taken from the non-preferred implementation and why, with a stable reference ID
-9. A remediation plan with concrete steps to fix the chosen baseline before or immediately after merge
-10. A short final verdict explaining why the recommendation is the best tradeoff
+### YAML Schema
 
-## Reporting Guidance
+The YAML must contain a top-level `report` key with the following structure. All fields are required; use `""` for empty strings and `[]` for empty lists rather than null.
+
+```yaml
+report:
+  meta:
+    team_cl_feature_path: string         # normalized team-cl feature-dir
+    team_cp_feature_path: string         # normalized team-cp feature-dir
+    canonical_base_branch: string
+    product_docs: [string, ...]          # empty list if none provided
+    generated_at: string                 # ISO-8601 timestamp
+    reviewed_by_llm: string              # model identifier
+
+  executive_recommendation:
+    preferred_team: string               # exactly: "Team-CL", "Team-CP", or "hybrid"
+    hybrid_base: string | null           # "Team-CL" or "Team-CP" when hybrid; null otherwise
+    summary: string                      # 2-4 sentence plain-text summary
+
+  comparison_matrix:                     # exactly these criteria, in this order
+    - criterion: string
+      team_cl: { score: string, notes: string }
+      team_cp: { score: string, notes: string }
+    # required criteria (exact strings):
+    # PRD Alignment, Speckit Alignment, Correctness, Completeness, Code Quality,
+    # Tests, Simplicity, Robustness, Operational Readiness, Merge Risk, Overall Quality
+
+  alignment_findings:                    # one entry per AF-N finding; [] if none
+    - id: string                         # "AF-1", "AF-2", ...
+      requirement: string
+      expected: string
+      team_cl_observation: string
+      team_cp_observation: string
+      impact: string
+
+  team_cl:
+    tasks_md_status: string              # exactly: "current" or "stale"
+    tasks_md_notes: string
+    pros: [string, ...]
+    cons: [string, ...]
+
+  team_cp:
+    tasks_md_status: string              # exactly: "current" or "stale"
+    tasks_md_notes: string
+    pros: [string, ...]
+    cons: [string, ...]
+
+  findings:                              # one entry per F-N finding; [] if none
+    - id: string                         # "F-1", "F-2", ...
+      team: string                       # "Team-CL", "Team-CP", or "Both"
+      severity: string                   # "Critical", "High", "Medium", or "Low"
+      category: string                   # gap | missing-test | anti-pattern | spec-drift | debt | unrelated-drift
+      description: string
+      impact: string
+      evidence: string                   # file path + line reference
+
+  cherry_picks:                          # empty list if none
+    - id: string                         # "C-1", "C-2", ...
+      from_team: string                  # "Team-CL" or "Team-CP"
+      description: string
+      rationale: string
+      target_files: [string, ...]
+
+  remediation_plan:                      # ordered steps
+    - step: integer
+      description: string
+      priority: string                   # "before-merge" or "after-merge"
+      owner: string
+
+  final_verdict: string                  # 2-5 sentence decisive closing statement
+```
+
+### Reporting Guidance
+
+Apply these constraints when populating the YAML fields:
 
 - Be explicit about where code diverges from the Speckit artifacts or the product documents.
-- Stop instead of continuing if any Speckit artifact other than `tasks.md` differs between Team-CL and Team-CP.
-- Be explicit about which observations come from the canonical base diff versus the direct Team-CL and Team-CP comparison.
-- Distinguish missing implementation from incorrect implementation.
-- Separate code-quality concerns from product-behavior gaps.
-- Verify each branch's `tasks.md` against the implementation in that same branch, not against the other branch.
-- Stop and alert the user if either `tasks.md` is stale or materially inconsistent with its implementation branch.
-- Treat code already present on the canonical base branch as baseline context, not feature-specific work.
-- Call out unrelated drift on either implementation branch when its diff against the canonical base branch includes changes outside the feature scope.
-- Call out unjustified abstractions, premature generalization, or infrastructure complexity that the spec does not require.
-- Highlight where one team has stronger tests, safer rollout behavior, clearer contracts, or better failure handling even if that team is not the selected baseline.
-- Use `PRD Alignment` to describe alignment with the higher-level product documents.
-- Use `Speckit Alignment` to describe alignment with the feature-level Speckit artifacts.
-- Use `Merge risk` instead of `Overall risk` for the final risk row in the comparison table.
-- Number alignment findings using stable identifiers like `AF-1`, `AF-2`, `AF-3`.
-- Number findings using stable identifiers like `F-1`, `F-2`, `F-3`.
-- Number cherry-pick recommendations using stable identifiers like `C-1`, `C-2`, `C-3`.
-- Use the labels `Team-CL` and `Team-CP` consistently.
-- Prefer decisive recommendations over vague summaries.
-- Keep the report practical for engineers deciding which branch or worktree to keep and what to cherry-pick.
+- Stop instead of emitting YAML if any Speckit artifact other than `tasks.md` differs between Team-CL and Team-CP.
+- Be explicit in finding descriptions about whether observations come from the canonical base diff versus the direct Team-CL and Team-CP comparison.
+- Distinguish "missing implementation" from "incorrect implementation" in finding `description` fields.
+- Separate code-quality concerns from product-behavior gaps using the `category` field.
+- Verify each branch's `tasks.md` against the implementation in its own branch only.
+- Stop and alert the user if either `tasks.md` is stale or materially inconsistent with its implementation before emitting YAML.
+- Treat code already on the canonical base branch as baseline context, not feature-specific evidence.
+- Call out unrelated drift on either branch in the `findings` array using category `unrelated-drift`.
+- Highlight where the non-preferred team has stronger approaches in their `pros` entries even when their team is not selected.
+- Use exactly `PRD Alignment` and `Speckit Alignment` as criterion names in `comparison_matrix`.
+- Use exactly `Merge Risk` as the criterion name for the risk row (not "Overall Risk" or "Merge risk").
+- `preferred_team` must be exactly one of: `Team-CL`, `Team-CP`, `hybrid`. Never leave it ambiguous.
+- Number alignment findings `AF-1`, `AF-2`, etc.; implementation findings `F-1`, `F-2`, etc.; cherry-picks `C-1`, `C-2`, etc.
 
-## Suggested Report Shape
+### Output Examples
 
-Use this structure unless a better equivalent improves clarity:
+See [`.specify/examples/speckat.compare-code.example-1.yaml`](../../.specify/examples/speckat.compare-code.example-1.yaml) (single winner — Team-CP preferred) and [`.specify/examples/speckat.compare-code.example-2.yaml`](../../.specify/examples/speckat.compare-code.example-2.yaml) (hybrid — Team-CL base with cherry-picks from Team-CP) for complete worked examples of the expected YAML output.
 
-### Executive Summary
+To render the YAML output into a human-readable markdown report, use the rendering prompt:
 
-### Scope And Inputs
-
-### Comparison Matrix
-
-### Alignment Findings
-
-### Team-CL Review
-
-### Team-CP Review
-
-### Cherry-Pick Recommendations
-
-### Remediation Plan
-
-### Final Verdict
+```
+@speckat.compare-code.render <path-to-yaml-output>
+```

@@ -94,38 +94,18 @@ if ($SkipExtras) {
     Write-Host "Phase 2 — extras (copy-once; existing files are never overwritten)"
     Write-Host "--------------------------------------------------------------------"
 
-    # Relative paths under both $ExtrasDir (source) and $ProjectRoot (destination)
-    $extras = @(
-        '.github/agents/speckat.comparer-code.agent.md'
-        '.github/agents/speckat.comparer-spec.agent.md'
-        '.github/agents/speckat.reviewer-code.agent.md'
-        '.github/agents/context7.agent.md'
-        '.github/prompts/speckat.compare-code.prompt.md'
-        '.github/prompts/speckat.compare-specs.prompt.md'
-        '.github/prompts/speckat.bootstrap-worktrees.prompt.md'
-        '.github/prompts/speckat.git-commit.prompt.md'
-        '.specify/memory/constitution.dotnet.md'
-        '.specify/memory/go-constitution.md'
-    )
-
     $copied  = 0
     $skipped = 0
-    $missing = 0
 
-    foreach ($rel in $extras) {
-        $srcPath = Join-Path $ExtrasDir ($rel -replace '/', '\')
-        $dstPath = Join-Path $ProjectRoot ($rel -replace '/', '\')
-
-        if (-not (Test-Path $srcPath)) {
-            Write-Warning "  [WARN]  source not found: extras\$rel"
-            $missing++
-            continue
-        }
+    Get-ChildItem -Path $ExtrasDir -Recurse -File | Sort-Object FullName | ForEach-Object {
+        $srcPath = $_.FullName
+        $rel     = $srcPath.Substring($ExtrasDir.Length).TrimStart('\', '/')
+        $dstPath = Join-Path $ProjectRoot $rel
 
         if (Test-Path $dstPath) {
             Write-Host "  [SKIP]  $rel (already exists)"
             $skipped++
-            continue
+            return
         }
 
         $dstDir = Split-Path $dstPath -Parent
@@ -143,7 +123,7 @@ if ($SkipExtras) {
     }
 
     Write-Host ""
-    Write-Host "  Extras summary: $copied copied, $skipped already existed, $missing sources missing"
+    Write-Host "  Extras summary: $copied copied, $skipped already existed"
 }
 
 Write-Host ""

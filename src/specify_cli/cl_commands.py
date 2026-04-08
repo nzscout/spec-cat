@@ -27,19 +27,6 @@ app = typer.Typer(
 )
 console = Console()
 
-EXTRA_ENTRIES = [
-    ".github/agents/speckat.comparer-code.agent.md",
-    ".github/agents/speckat.comparer-spec.agent.md",
-    ".github/agents/speckat.reviewer-code.agent.md",
-    ".github/agents/context7.agent.md",
-    ".github/prompts/speckat.compare-code.prompt.md",
-    ".github/prompts/speckat.compare-specs.prompt.md",
-    ".github/prompts/speckat.bootstrap-worktrees.prompt.md",
-    ".github/prompts/speckat.git-commit.prompt.md",
-    ".specify/memory/constitution.dotnet.md",
-    ".specify/memory/go-constitution.md",
-]
-
 
 # ---------------------------------------------------------------------------
 # Internals
@@ -79,30 +66,27 @@ def _apply_patches(project_root: Path, dry_run: bool) -> int:
 def _copy_extras(project_root: Path, dry_run: bool) -> tuple[int, int, int]:
     extras_root = _find_cl_root() / "extras"
 
-    copied = skipped = missing = 0
-    for entry in EXTRA_ENTRIES:
-        src = extras_root / Path(entry)
-        dst = project_root / Path(entry)
-
-        if not src.exists():
-            console.print(f"  [yellow][WARN] source not found: extras/{entry}[/yellow]")
-            missing += 1
+    copied = skipped = 0
+    for src in sorted(extras_root.rglob("*")):
+        if src.is_dir():
             continue
+        rel = src.relative_to(extras_root)
+        dst = project_root / rel
 
         if dst.exists():
-            console.print(f"  [dim][SKIP] {entry}[/dim]")
+            console.print(f"  [dim][SKIP] {rel}[/dim]")
             skipped += 1
             continue
 
         if dry_run:
-            console.print(f"  [cyan][DRY]  {entry} (would copy)[/cyan]")
+            console.print(f"  [cyan][DRY]  {rel} (would copy)[/cyan]")
         else:
             dst.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(src, dst)
-            console.print(f"  [green][OK]   {entry}[/green]")
+            console.print(f"  [green][OK]   {rel}[/green]")
         copied += 1
 
-    return copied, skipped, missing
+    return copied, skipped, 0
 
 
 # ---------------------------------------------------------------------------
@@ -147,7 +131,7 @@ def init(
     else:
         console.print("[bold]Phase 3 — extras[/bold]")
         copied, skipped, missing = _copy_extras(root, dry_run=dry_run)
-        console.print(f"  {copied} copied, {skipped} already existed, {missing} sources missing")
+        console.print(f"  {copied} copied, {skipped} already existed")
 
     console.rule("[bold green]Done[/bold green]")
 
@@ -222,8 +206,12 @@ def verify(
         ):
             checks.append((label, False, f"File not found: {create_ps1}"))
 
-    # --- extra agent / prompt files -----------------------------------------
-    for rel in EXTRA_ENTRIES:
+    # --- extra files (derived dynamically from the extras/ folder) ----------
+    extras_root = _find_cl_root() / "extras"
+    for src in sorted(extras_root.rglob("*")):
+        if src.is_dir():
+            continue
+        rel = src.relative_to(extras_root)
         path = root / rel
         checks.append((f"Extra present: {rel}", path.exists(), str(path)))
 
