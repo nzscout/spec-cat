@@ -15,7 +15,8 @@ Read the YAML file at the path provided in the user input and render it into a f
 
 1. Read the YAML file at the provided path.
 2. Produce a markdown report that maps exactly to the YAML schema — no sections added, no sections omitted, no section order changed.
-3. Output only the rendered markdown. Do not add commentary, preamble, or code fences around the output.
+3. Save the rendered markdown to a file next to the YAML source with the same base name but a `.md` extension. For example, if the input is `specs/reviews/DATA-5330-Migrate-v1-to-v2-go-opus-4_6.yaml`, write the output to `specs/reviews/DATA-5330-Migrate-v1-to-v2-go-opus-4_6.md`.
+4. Output only the rendered markdown. Do not add commentary, preamble, or code fences around the output.
 
 ## Metadata Header
 

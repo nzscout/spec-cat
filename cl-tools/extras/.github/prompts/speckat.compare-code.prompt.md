@@ -212,6 +212,33 @@ Emit your complete report as a single fenced YAML block. Do not write any prose,
 
 The consolidation agent and the human markdown renderer both consume this YAML directly. A separate rendering prompt (`speckat.compare-code.render`) converts it to a formatted markdown report for human review.
 
+### Output File Location and Naming
+
+Save the YAML output to a file under `specs/reviews/` in the repository root. Create the directory if it does not exist.
+
+Derive the file name as follows:
+
+1. Take the current git branch name (the branch the user is on when invoking this prompt).
+2. Strip any parent prefix up to and including the last `/`. For example `feature/DATA-5330-Migrate-v1-to-v2-go` becomes `DATA-5330-Migrate-v1-to-v2-go`.
+3. Append a hyphen and the LLM model identifier with dots replaced by underscores. For example `opus-4.6` becomes `opus-4_6`.
+4. Add the `.yaml` extension.
+
+Final path pattern:
+
+```
+specs/reviews/<branch-leaf>-<model_id>.yaml
+```
+
+Examples:
+
+| Branch                                     | Model       | Output file                                                    |
+| ------------------------------------------ | ----------- | -------------------------------------------------------------- |
+| `feature/DATA-5330-Migrate-v1-to-v2-go`   | opus-4.6    | `specs/reviews/DATA-5330-Migrate-v1-to-v2-go-opus-4_6.yaml`   |
+| `feature/DATA-5330-Migrate-v1-to-v2-go`   | gpt-5.4     | `specs/reviews/DATA-5330-Migrate-v1-to-v2-go-gpt-5_4.yaml`    |
+| `fix/DATA-1001-null-check`                | sonnet-4    | `specs/reviews/DATA-1001-null-check-sonnet-4.yaml`             |
+
+The rendered markdown report follows the same convention but with a `.md` extension (e.g. `specs/reviews/DATA-5330-Migrate-v1-to-v2-go-opus-4_6.md`).
+
 ### YAML Schema
 
 The YAML must contain a top-level `report` key with the following structure. All fields are required; use `""` for empty strings and `[]` for empty lists rather than null.
