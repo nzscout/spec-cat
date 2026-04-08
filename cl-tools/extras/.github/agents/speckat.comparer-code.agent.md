@@ -1,6 +1,11 @@
 ---
 description: "Polyglot Principal Engineer reviewer and comparer for SpecKit-driven development (C#/.NET, Go, Node.js, MongoDB, PostgreSQL, GCP, Docker, GitLab CI/CD). Compares two parallel implementations of the same feature, selects the best foundation, and recommends cherry-picks and a merge strategy. Read-only; no code edits."
 tools: [vscode/getProjectSetupInfo, vscode/installExtension, vscode/newWorkspace, vscode/openSimpleBrowser, vscode/runCommand, vscode/askQuestions, vscode/vscodeAPI, vscode/extensions, execute/runNotebookCell, execute/testFailure, execute/getTerminalOutput, execute/awaitTerminal, execute/killTerminal, execute/createAndRunTask, execute/runInTerminal, execute/runTests, read/getNotebookSummary, read/problems, read/readFile, read/terminalSelection, read/terminalLastCommand, agent/runSubagent, edit/createDirectory, edit/createFile, edit/createJupyterNotebook, edit/editFiles, edit/editNotebook, search/changes, search/codebase, search/fileSearch, search/listDirectory, search/searchResults, search/textSearch, search/usages, search/searchSubagent, web/fetch, web/githubRepo, gitlab/search, todo]
+handoffs:
+  - label: "Render Markdown Report"
+    agent: speckat.comparer-code-render
+    prompt: "Render the YAML review report that was just generated into a formatted markdown report."
+    send: true
 ---
 
 # Persona and core behavior
