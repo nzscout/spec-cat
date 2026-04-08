@@ -153,7 +153,11 @@ $patches = @(
         FilePath    = $commonScript
         # The `if ($latestFeature)` early-return block inside Get-CurrentBranch.
         # Replaced with: Git Flow fallback (most-recently-modified dir) + same return.
-        StartAnchor = '        if \(\$latestFeature\) \{'
+        # Alternation makes the patch idempotent: on fresh files the original
+        # `if ($latestFeature)` line matches; on already-patched files the Git Flow
+        # comment (first line of the snippet) matches instead, so re-application
+        # replaces the whole snippet with itself rather than duplicating.
+        StartAnchor = '        (# If no numbered dirs found, use most recently modified dir \(Git Flow pattern\)|if \(\$latestFeature\) \{)'
         EndAnchor   = '    # Final fallback'
         SnippetPath = Join-Path $ScriptDir 'snippets/common-get-current-branch-gitflow.ps1'
         Name        = 'common.ps1 — Get-CurrentBranch: Git Flow dir fallback'
