@@ -37,13 +37,15 @@ All upstream functionality is preserved unchanged. CL additions live entirely in
 
 | File | Purpose |
 |------|---------|
-| `.github/agents/speckit.reviewer-code.agent.md` | Principal-engineer code review agent |
-| `.github/agents/speckit.comparer-code.agent.md` | Compares two parallel implementations |
-| `.github/agents/speckit.comparer-spec.agent.md` | Reconciles two spec artifact sets |
+| `.github/agents/speckat.reviewer-code.agent.md` | Principal-engineer code review agent |
+| `.github/agents/speckat.comparer-code.agent.md` | Compares two parallel implementations |
+| `.github/agents/speckat.comparer-spec.agent.md` | Reconciles two spec artifact sets |
 | `.github/agents/context7.agent.md` | Up-to-date library docs via Context7 |
-| `.github/prompts/speckit.reconcile-code.prompt.md` | Reconcile code prompt |
-| `.github/prompts/speckit.reconcile-spec.prompt.md` | Reconcile spec prompt || `.github/prompts/speckat.bootstrap-worktrees.prompt.md` | Bootstrap parallel worktrees prompt |
-| `.github/prompts/speckat.git-commit.prompt.md` | Speckit-style git commit prompt || `.specify/memory/constitution.dotnet.md` | .NET constitution template |
+| `.github/prompts/speckat.compare-code.prompt.md` | Compare code implementations prompt |
+| `.github/prompts/speckat.compare-specs.prompt.md` | Compare specification variants prompt |
+| `.github/prompts/speckat.bootstrap-worktrees.prompt.md` | Bootstrap parallel worktrees prompt |
+| `.github/prompts/speckat.git-commit.prompt.md` | Speckit-style git commit prompt |
+| `.specify/memory/constitution.dotnet.md` | .NET constitution template |
 | `.specify/memory/go-constitution.md` | Go constitution template |
 
 ---
@@ -106,13 +108,13 @@ After `speckit init` in a new directory (in addition to everything `specify init
 ```
 .github/
   agents/
-    speckit.reviewer-code.agent.md           ← code review agent
-    speckit.comparer-code.agent.md           ← implementation comparer
-    speckit.comparer-spec.agent.md           ← spec reconciler
+    speckat.reviewer-code.agent.md           ← code review agent
+    speckat.comparer-code.agent.md           ← implementation comparer
+    speckat.comparer-spec.agent.md           ← spec reconciler
     context7.agent.md                        ← library docs agent
   prompts/
-    speckit.reconcile-code.prompt.md
-    speckit.reconcile-spec.prompt.md
+    speckat.compare-code.prompt.md
+    speckat.compare-specs.prompt.md
     speckat.bootstrap-worktrees.prompt.md    ← parallel worktree bootstrap
     speckat.git-commit.prompt.md             ← git commit helper
 .specify/
@@ -328,7 +330,7 @@ speckit init
 Select-String -Path ".github\agents\speckit.specify.agent.md" -Pattern "short-name"
 
 # Verify extras copied
-Test-Path ".github\agents\speckit.reviewer-code.agent.md"
+Test-Path ".github\agents\speckat.reviewer-code.agent.md"
 Test-Path ".github\agents\context7.agent.md"
 ```
 

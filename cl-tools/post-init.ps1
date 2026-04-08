@@ -96,12 +96,12 @@ if ($SkipExtras) {
 
     # Relative paths under both $ExtrasDir (source) and $ProjectRoot (destination)
     $extras = @(
-        '.github/agents/speckit.comparer-code.agent.md'
-        '.github/agents/speckit.comparer-spec.agent.md'
-        '.github/agents/speckit.reviewer-code.agent.md'
+        '.github/agents/speckat.comparer-code.agent.md'
+        '.github/agents/speckat.comparer-spec.agent.md'
+        '.github/agents/speckat.reviewer-code.agent.md'
         '.github/agents/context7.agent.md'
-        '.github/prompts/speckit.reconcile-code.prompt.md'
-        '.github/prompts/speckit.reconcile-spec.prompt.md'
+        '.github/prompts/speckat.compare-code.prompt.md'
+        '.github/prompts/speckat.compare-specs.prompt.md'
         '.github/prompts/speckat.bootstrap-worktrees.prompt.md'
         '.github/prompts/speckat.git-commit.prompt.md'
         '.specify/memory/constitution.dotnet.md'

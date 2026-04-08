@@ -27,6 +27,19 @@ app = typer.Typer(
 )
 console = Console()
 
+EXTRA_ENTRIES = [
+    ".github/agents/speckat.comparer-code.agent.md",
+    ".github/agents/speckat.comparer-spec.agent.md",
+    ".github/agents/speckat.reviewer-code.agent.md",
+    ".github/agents/context7.agent.md",
+    ".github/prompts/speckat.compare-code.prompt.md",
+    ".github/prompts/speckat.compare-specs.prompt.md",
+    ".github/prompts/speckat.bootstrap-worktrees.prompt.md",
+    ".github/prompts/speckat.git-commit.prompt.md",
+    ".specify/memory/constitution.dotnet.md",
+    ".specify/memory/go-constitution.md",
+]
+
 
 # ---------------------------------------------------------------------------
 # Internals
@@ -65,21 +78,9 @@ def _apply_patches(project_root: Path, dry_run: bool) -> int:
 
 def _copy_extras(project_root: Path, dry_run: bool) -> tuple[int, int, int]:
     extras_root = _find_cl_root() / "extras"
-    entries = [
-        ".github/agents/speckit.comparer-code.agent.md",
-        ".github/agents/speckit.comparer-spec.agent.md",
-        ".github/agents/speckit.reviewer-code.agent.md",
-        ".github/agents/context7.agent.md",
-        ".github/prompts/speckit.reconcile-code.prompt.md",
-        ".github/prompts/speckit.reconcile-spec.prompt.md",
-        ".github/prompts/speckat.bootstrap-worktrees.prompt.md",
-        ".github/prompts/speckat.git-commit.prompt.md",
-        ".specify/memory/constitution.dotnet.md",
-        ".specify/memory/go-constitution.md",
-    ]
 
     copied = skipped = missing = 0
-    for entry in entries:
+    for entry in EXTRA_ENTRIES:
         src = extras_root / Path(entry)
         dst = project_root / Path(entry)
 
@@ -222,13 +223,7 @@ def verify(
             checks.append((label, False, f"File not found: {create_ps1}"))
 
     # --- extra agent / prompt files -----------------------------------------
-    extras = [
-        ".github/agents/speckit.reviewer-code.agent.md",
-        ".github/agents/speckit.comparer-code.agent.md",
-        ".github/agents/speckit.comparer-spec.agent.md",
-        ".github/agents/context7.agent.md",
-    ]
-    for rel in extras:
+    for rel in EXTRA_ENTRIES:
         path = root / rel
         checks.append((f"Extra present: {rel}", path.exists(), str(path)))
 
