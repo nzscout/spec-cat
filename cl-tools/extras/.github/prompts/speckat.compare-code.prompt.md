@@ -186,6 +186,20 @@ When the implementation spans multiple repos, also review:
 - backward compatibility and rollback implications
 - consistency of naming, contracts, and operational flow
 
+### Paths to Exclude from Diff Review
+
+When diffing against the canonical base branch, unconditionally exclude the following paths from the implementation comparison. These are Speckit and IDE infrastructure files installed by project setup tooling and are expected to be identical on both branches. Do not report them as unrelated drift, scope violations, or findings of any kind.
+
+- `.github/agents/` — agent persona files
+- `.github/prompts/` — AI prompt files
+- `.specify/templates/` — document templates
+- `.specify/scripts/` — helper scripts
+- `.specify/memory/` — AI memory context files
+- `.specify/examples/` — output examples
+- `.specify/extensions/` — installed extensions
+
+The Speckit feature directories themselves (e.g. within `specs/`) are still reviewed for artifact consistency as described above.
+
 ## Review Priorities
 
 Evaluate Team-CL and Team-CP against these priorities:
