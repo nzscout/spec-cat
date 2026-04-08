@@ -1,61 +1,58 @@
-2. **Create the feature branch and spec folder**:
+2. **Branch creation** (Git Flow override + current-branch reuse):
 
-   a. First, check if the user is **already on a matching feature branch**:
-      - Run `git rev-parse --abbrev-ref HEAD` to get the current branch name
-      - If the current branch ends with the `<short-name>` (matching patterns like `feature/<short-name>`, `<any-prefix>/<short-name>`, or just `<short-name>`), then the branch already exists and the user intends to work on it:
-        - **Do NOT create a new branch** — stay on the current branch
-        - **Do NOT run `create-new-feature.ps1`**
-        - Derive BRANCH_NAME from the current branch (the `<short-name>` portion)
-        - Set SPEC_FILE to `specs/<short-name>/spec.md`
-        - Create the `specs/<short-name>/` directory if it does not exist
-        - Copy `.specify/templates/spec-template.md` to `specs/<short-name>/spec.md` if the spec file does not exist yet
-        - Skip to step 3
-      - If the current branch does **not** match, proceed with branch creation below
+  This step overrides the default hook-only branch guidance when exact Git Flow naming is required.
 
-   b. Fetch all remote branches to ensure we have the latest information:
+  a. First, check if the user is **already on a matching feature branch**:
+    - Run `git rev-parse --abbrev-ref HEAD` to get the current branch name
+    - If the current branch ends with the `<short-name>` (matching patterns like `feature/<short-name>`, `<any-prefix>/<short-name>`, or just `<short-name>`), then the branch already exists and the user intends to work on it:
+      - **Do NOT create a new branch** — stay on the current branch
+      - **Do NOT run `create-new-feature.ps1`**
+      - Derive `BRANCH_NAME` from the current branch
+      - If the user provided `short-name:`, set `SPECIFY_FEATURE_DIRECTORY` to `specs/<short-name>` before continuing to step 3
+      - Continue to step 3 so the spec directory and files are created there
+    - If the current branch does **not** match, proceed with branch creation below
 
-      ```bash
-      git fetch --all --prune
+  b. Fetch all remote branches to ensure the branch check uses current refs:
+
+    ```bash
+    git fetch --all --prune
+    ```
+
+  c. **If a `short-name` was provided (Git Flow mode)**:
+    - Run the script with the `-GitFlow` flag to create a `feature/<short-name>` branch:
+
+      ```powershell
+      .specify/scripts/powershell/create-new-feature.ps1 -Json -GitFlow -ShortName "<short-name>" "<feature description>"
       ```
 
-   c. **If a `short-name` was provided (Git Flow mode)**:
-      - Run the script with the `-GitFlow` flag to create a `feature/<short-name>` branch and `specs/<short-name>/` folder:
+    - Example: if the user provides `short-name: DATA-5200-Feature-name`, run:
 
-        ```powershell
-        .specify/scripts/powershell/create-new-feature.ps1 -Json -GitFlow -ShortName "<short-name>" "<feature description>"
-        ```
+      ```powershell
+      .specify/scripts/powershell/create-new-feature.ps1 -Json -GitFlow -ShortName "DATA-5200-Feature-name" "Add user authentication"
+      ```
 
-      - Example: if the user provides `short-name: DATA-5200-Feature-name`, run:
+    - This creates git branch `feature/DATA-5200-Feature-name`
+    - Set `SPECIFY_FEATURE_DIRECTORY` to `specs/<short-name>` before continuing to step 3 so the spec folder matches the Jira-style short name exactly
+    - No sequential numbering is applied — the provided short name is used as-is
 
-        ```powershell
-        .specify/scripts/powershell/create-new-feature.ps1 -Json -GitFlow -ShortName "DATA-5200-Feature-name" "Add user authentication"
-        ```
+  d. **If no `short-name` was provided (legacy/sequential mode)**:
+    - Check `.specify/init-options.json` for `branch_numbering` value
+    - Determine the next available branch number and run the script:
 
-      - This creates git branch `feature/DATA-5200-Feature-name` and spec folder `specs/DATA-5200-Feature-name/`
-      - No sequential numbering is applied — the name is used as-is
+      ```powershell
+      # Sequential (default):
+      .specify/scripts/powershell/create-new-feature.ps1 -Json -ShortName "user-auth" "<feature description>"
 
-   d. **If no `short-name` was provided (legacy/sequential mode)**:
-      - Check `.specify/init-options.json` for `branch_numbering` value
-      - Find the highest feature number across all sources for the short-name:
-        - Remote branches: `git ls-remote --heads origin | grep -E 'refs/heads/[0-9]+-<short-name>$'`
-        - Local branches: `git branch | grep -E '^[* ]*[0-9]+-<short-name>$'`
-        - Specs directories: Check for directories matching `specs/[0-9]+-<short-name>`
-      - Determine the next available number (N+1) and run the script:
+      # Timestamp mode (if branch_numbering == "timestamp"):
+      .specify/scripts/powershell/create-new-feature.ps1 -Json -Timestamp -ShortName "user-auth" "<feature description>"
+      ```
 
-        ```powershell
-        # Sequential (default):
-        .specify/scripts/powershell/create-new-feature.ps1 -Json -ShortName "user-auth" "<feature description>"
+    - Let step 3 keep its default feature-directory resolution in legacy mode
 
-        # Timestamp mode (if branch_numbering == "timestamp"):
-        .specify/scripts/powershell/create-new-feature.ps1 -Json -Timestamp -ShortName "user-auth" "<feature description>"
-        ```
-
-   **IMPORTANT**:
-   - Always check the current branch first before attempting to create a new one — if it already matches the short-name, reuse it
-   - Check all three sources (remote branches, local branches, specs directories) to find the highest number (legacy mode only)
-   - Only match branches/directories with the exact short-name pattern (legacy mode only)
-   - If no existing branches/directories found with this short-name, start with number 1 (legacy mode only)
-   - You must only ever run the create script once per feature, and only if the branch doesn't already exist
-   - The JSON is provided in the terminal as output - always refer to it to get the actual content you're looking for
-   - The JSON output will contain BRANCH_NAME and SPEC_FILE paths
-   - For single quotes in args like "I'm Groot", use escape syntax: e.g 'I'\''m Groot' (or double-quote if possible: "I'm Groot")
+  **IMPORTANT**:
+  - Always check the current branch first before attempting to create a new one — if it already matches the short-name, reuse it
+  - You must only ever run the create script once per feature, and only if the branch does not already exist
+  - Always include the JSON flag and use the script output as the source of truth for `BRANCH_NAME`
+  - If the default `before_specify` hook already created a non-matching branch, switch to the correct Git Flow branch produced by the script and continue with that branch
+  - Step 3 remains responsible for creating the spec directory and spec file
+  - For single quotes in args like "I'm Groot", use escape syntax: e.g 'I'\''m Groot' (or double-quote if possible: "I'm Groot")

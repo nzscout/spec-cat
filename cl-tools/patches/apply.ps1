@@ -137,8 +137,9 @@ $patches = @(
     },
     @{
         FilePath    = $specifyAgent
-        # Match the stable step-2 heading prefix; upstream may append extra guidance.
-        StartAnchor = '^2\. \*\*Create the feature branch\*\*'
+        # Upstream switched from direct branch creation text to hook-based branch creation.
+        # Accept either heading so this patch keeps working across both template variants.
+        StartAnchor = '^2\. \*\*(Branch creation|Create the feature branch)\*\*'
         # Next section heading starts with "3. "
         EndAnchor   = '^3\. '
         SnippetPath = Join-Path $ScriptDir 'snippets/specify-step2.md'

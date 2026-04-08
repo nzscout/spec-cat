@@ -26,18 +26,21 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 SCRIPTS_PS = PROJECT_ROOT / "scripts" / "powershell"
 APPLY_PS1 = PROJECT_ROOT / "cl-tools" / "patches" / "apply.ps1"
 
-# Minimal speckit.specify.agent.md stub — just enough to satisfy the two agent patches.
+# Minimal speckit.specify.agent.md stub — aligned with the current upstream
+# hook-based template, but still minimal enough for the two agent patches.
 _AGENT_STUB = """\
 ---
 description: test stub
 ---
 
-1. **Generate a concise short name** (2-4 words) for the branch:
+1. **Generate a concise short name** (2-4 words) for the feature:
    - placeholder step 1
 
-2. **Create the feature branch** by running the script...
+2. **Branch creation** (optional, via hook):
+    - placeholder step 2
 
-3. **Create the spec file**
+3. **Create the spec feature directory**:
+    - placeholder step 3
 """
 
 pytestmark = pytest.mark.skipif(

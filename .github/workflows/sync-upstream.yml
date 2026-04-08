@@ -121,7 +121,7 @@ jobs:
               if ($content -notmatch '1\. \*\*Generate a concise short name\*\*') {
                   $anchorWarnings += "specify step-1 anchor not found"
               }
-              if ($content -notmatch '2\. \*\*Create the feature branch\*\* by running') {
+                if ($content -notmatch '2\. \*\*(Branch creation|Create the feature branch)\*\*') {
                   $anchorWarnings += "specify step-2 anchor not found"
               }
           } else {
