@@ -137,8 +137,8 @@ $patches = @(
     },
     @{
         FilePath    = $specifyAgent
-        # Upstream heading: "2. **Create the feature branch** by running the script..."
-        StartAnchor = '^2\. \*\*Create the feature branch\*\* by running'
+        # Match the stable step-2 heading prefix; upstream may append extra guidance.
+        StartAnchor = '^2\. \*\*Create the feature branch\*\*'
         # Next section heading starts with "3. "
         EndAnchor   = '^3\. '
         SnippetPath = Join-Path $ScriptDir 'snippets/specify-step2.md'
