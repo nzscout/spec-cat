@@ -118,7 +118,23 @@ Render as a table with columns: Step | Description | Priority | Owner.
 
 Bold priority values: `**Before merge**` or `**After merge**` (title-case).
 
-### 10. Final Verdict
+### 10. Spec Files Drift
+
+Source: `report.spec_drift`
+
+If the list is empty, write: "No spec file drift detected."
+
+Otherwise, open with a warning blockquote:
+
+> **⚠️ Spec artifact drift detected.** The following differences were found in non-`tasks.md` Speckit artifacts between Team-CL and Team-CP. Substantial differences should be reconciled.
+
+Then render as a table with columns: ID | File | Classification | Team-CL Value | Team-CP Value | Description | Impact.
+
+Bold the classification: `**Trivial**` or `**Substantial**`.
+
+Bold any impact value that is not `"none"`.
+
+### 11. Final Verdict
 
 Source: `report.final_verdict`
 

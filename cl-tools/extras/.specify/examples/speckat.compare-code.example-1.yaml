@@ -171,6 +171,8 @@ report:
       priority: "before-merge"
       owner: "Team-CP"
 
+  spec_drift: []
+
   final_verdict: >
     Team-CP is the correct foundation. The per-channel JSONB model faithfully implements
     the spec, the migration is safe for production, digest mode is complete, and

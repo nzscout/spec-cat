@@ -98,11 +98,14 @@ Normalize the canonical base branch before review:
 
 Assume the Speckit feature directories in the two branches or worktrees describe the same feature.
 
-Hard precondition:
+Spec artifact precondition:
 
-1. `spec.md`, `plan.md`, research, quickstart, data model, contracts, and checklists must be identical between Team-CL and Team-CP.
-2. `tasks.md` is the only Speckit artifact allowed to differ because it belongs to the implementation branch it lives in.
-3. If any Speckit artifact other than `tasks.md` differs between the two feature directories, stop immediately and alert the user. Do not continue with the implementation comparison until the feature artifacts are reconciled.
+1. `tasks.md` is always expected to differ between Team-CL and Team-CP because it belongs to the implementation branch it lives in.
+2. All other Speckit artifacts (`spec.md`, `plan.md`, research, quickstart, data model, contracts, checklists) should be identical between Team-CL and Team-CP.
+3. Trivial differences are tolerated and ignored. A difference is trivial when it is limited to branch names, folder names, worktree paths, timestamps, or other environment-specific values that carry no behavioral or requirements meaning.
+4. Substantial differences are those that change requirements, acceptance criteria, data models, contracts, flows, constraints, or any other content with behavioral implications.
+5. If only trivial differences exist, proceed with the comparison as normal.
+6. If any substantial difference exists in a non-`tasks.md` artifact, do **not** stop. Continue the full comparison but populate the `spec_drift` section in the YAML output with every difference found (trivial and substantial) and flag the substantial ones clearly.
 
 ## Scope
 
@@ -137,7 +140,7 @@ Use sources in this order:
 
 If the product documents and the Speckit artifacts conflict, call it out explicitly. Do not silently choose one.
 
-If the two branches or worktrees differ in Speckit artifacts other than `tasks.md`, stop immediately and alert the user. Do not continue the implementation comparison.
+If the two branches or worktrees differ substantially in Speckit artifacts other than `tasks.md`, continue the comparison but populate the `spec_drift` section with all differences found and flag the substantial ones.
 
 If behavior already exists on the canonical base branch, treat it as baseline context rather than feature-specific evidence unless an implementation intentionally changes it.
 
@@ -148,8 +151,9 @@ Review the Speckit artifacts inside the normalized feature directory for both Te
 Apply this review gate before comparing implementation code:
 
 1. Compare all Speckit artifacts in both feature directories.
-2. If any file other than `tasks.md` differs, stop and alert the user with the exact file or files that differ.
-3. Only continue once the non-`tasks.md` artifacts are confirmed identical.
+2. If any file other than `tasks.md` differs, classify each difference as trivial or substantial.
+3. If only trivial differences exist, proceed normally — do not populate `spec_drift`.
+4. If any substantial difference exists, proceed with the comparison but populate the `spec_drift` section in the YAML output with **all** differences found (both trivial and substantial), marking each as `trivial` or `substantial`.
 
 Treat `tasks.md` as the only normally variable Speckit artifact because it belongs to the implementation layer and may legitimately differ between worktrees.
 
@@ -196,7 +200,7 @@ The Speckit feature directories themselves (e.g. within `specs/`) are still revi
 
 Evaluate Team-CL and Team-CP against these priorities:
 
-1. Non-`tasks.md` feature artifacts are identical across Team-CL and Team-CP; if not, stop
+1. Non-`tasks.md` feature artifacts are consistent across Team-CL and Team-CP; substantial drift triggers the `spec_drift` section
 2. Fidelity to the canonical base branch as the agreed root for measuring net-new feature work
 3. Each branch's `tasks.md` is up to date with its own implementation branch
 4. Functional completeness and correctness
@@ -308,6 +312,15 @@ report:
       priority: string                   # "before-merge" or "after-merge"
       owner: string
 
+  spec_drift:                            # [] if no substantial spec artifact differences
+    - id: string                         # "SD-1", "SD-2", ...
+      file: string                       # artifact filename, e.g. "spec.md"
+      classification: string             # exactly: "trivial" or "substantial"
+      team_cl_value: string              # what Team-CL has
+      team_cp_value: string              # what Team-CP has
+      description: string                # what differs and why it matters (or not)
+      impact: string                     # "none" for trivial; describe impact for substantial
+
   final_verdict: string                  # 2-5 sentence decisive closing statement
 ```
 
@@ -316,19 +329,19 @@ report:
 Apply these constraints when populating the YAML fields:
 
 - Be explicit about where code diverges from the Speckit artifacts or the product documents.
-- Stop instead of emitting YAML if any Speckit artifact other than `tasks.md` differs between Team-CL and Team-CP.
+- If any Speckit artifact other than `tasks.md` has substantial differences, populate `spec_drift` with all diffs found and flag the substantial ones. Include trivial diffs in the same section for completeness when substantial diffs are present.
 - Be explicit in finding descriptions about whether observations come from the canonical base diff versus the direct Team-CL and Team-CP comparison.
 - Distinguish "missing implementation" from "incorrect implementation" in finding `description` fields.
 - Separate code-quality concerns from product-behavior gaps using the `category` field.
 - Verify each branch's `tasks.md` against the implementation in its own branch only.
-- Stop and alert the user if either `tasks.md` is stale or materially inconsistent with its implementation before emitting YAML.
+- If either `tasks.md` is stale or materially inconsistent with its implementation, report it in the `team_cl` or `team_cp` section with `tasks_md_status: "stale"` and explain in `tasks_md_notes`.
 - Treat code already on the canonical base branch as baseline context, not feature-specific evidence.
 - Call out unrelated drift on either branch in the `findings` array using category `unrelated-drift`.
 - Highlight where the non-preferred team has stronger approaches in their `pros` entries even when their team is not selected.
 - Use exactly `PRD Alignment` and `Speckit Alignment` as criterion names in `comparison_matrix`.
 - Use exactly `Merge Risk` as the criterion name for the risk row (not "Overall Risk" or "Merge risk").
 - `preferred_team` must be exactly one of: `Team-CL`, `Team-CP`, `hybrid`. Never leave it ambiguous.
-- Number alignment findings `AF-1`, `AF-2`, etc.; implementation findings `F-1`, `F-2`, etc.; cherry-picks `C-1`, `C-2`, etc.
+- Number alignment findings `AF-1`, `AF-2`, etc.; implementation findings `F-1`, `F-2`, etc.; cherry-picks `C-1`, `C-2`, etc.; spec drift items `SD-1`, `SD-2`, etc.
 
 ### Output Examples
 

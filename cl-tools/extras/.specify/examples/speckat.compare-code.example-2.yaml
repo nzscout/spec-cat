@@ -197,6 +197,29 @@ report:
       priority: "after-merge"
       owner: "Team-CL"
 
+  spec_drift:
+    - id: "SD-1"
+      file: "spec.md"
+      classification: "trivial"
+      team_cl_value: "Branch reference: feature/cl/DATA-4200-api-rate-limiting"
+      team_cp_value: "Branch reference: feature/cp/DATA-4200-api-rate-limiting"
+      description: "Branch name reference differs due to team-specific branch naming convention. No behavioral impact."
+      impact: "none"
+    - id: "SD-2"
+      file: "plan.md"
+      classification: "substantial"
+      team_cl_value: "Step 3: Redis-backed sliding window counter with configurable window size"
+      team_cp_value: "Step 3: In-memory counter with fixed 60-second window"
+      description: "Implementation approach diverged in the plan itself. Team-CL plan specifies Redis backing while Team-CP plan specifies in-memory. This is a requirements-level disagreement about the backing store, not just an implementation choice."
+      impact: "High — the plan artifacts should have been reconciled before implementation began; the backing store choice directly affects the multi-node consistency requirement"
+    - id: "SD-3"
+      file: "data-model.md"
+      classification: "substantial"
+      team_cl_value: "rate_limits table with Redis key column and TTL field"
+      team_cp_value: "rate_limits table with in-memory counter reference and no TTL field"
+      description: "Data model differs in storage mechanism and TTL handling. Team-CL includes Redis-specific fields; Team-CP omits TTL entirely."
+      impact: "Medium — data model artifacts should agree on schema; TTL omission in Team-CP means no expiry semantics are defined"
+
   final_verdict: >
     Team-CL is the only viable base because its Redis-backed sliding window is the only
     implementation that satisfies the non-negotiable multi-instance consistency requirement.
