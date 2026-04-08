@@ -28,6 +28,12 @@ Add this block above all sections:
 > **Generated:** <report.meta.generated_at>
 ```
 
+If `report.spec_drift` contains any entry where `classification` is `"substantial"`, append the following warning line immediately after the metadata block:
+
+```
+> **⚠️ Spec drift detected — see [Spec Files Drift](#spec-files-drift) for details.**
+```
+
 ---
 
 ## Section Mapping
