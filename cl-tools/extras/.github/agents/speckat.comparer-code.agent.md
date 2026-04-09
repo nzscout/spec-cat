@@ -6,6 +6,10 @@ handoffs:
     agent: speckat.comparer-code-render
     prompt: "Render the YAML review report that was just generated into a formatted markdown report."
     send: true
+  - label: "Merge Multiple Reviews"
+    agent: speckat.comparer-code-merge
+    prompt: "Consolidate the independent review YAML files in specs/reviews/ into a single merged report."
+    send: false
 ---
 
 # Persona and core behavior
