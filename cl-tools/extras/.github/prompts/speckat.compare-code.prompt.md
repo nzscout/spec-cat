@@ -264,8 +264,8 @@ report:
 
   comparison_matrix:                     # exactly these criteria, in this order
     - criterion: string
-      team_cl: { score: string, notes: string }
-      team_cp: { score: string, notes: string }
+      team_cl: { score: integer, notes: string }   # score: 1-10 (10 = best)
+      team_cp: { score: integer, notes: string }   # score: 1-10 (10 = best)
     # required criteria (exact strings):
     # PRD Alignment, Speckit Alignment, Correctness, Completeness, Code Quality,
     # Tests, Simplicity, Robustness, Operational Readiness, Merge Risk, Overall Quality
@@ -340,6 +340,7 @@ Apply these constraints when populating the YAML fields:
 - Highlight where the non-preferred team has stronger approaches in their `pros` entries even when their team is not selected.
 - Use exactly `PRD Alignment` and `Speckit Alignment` as criterion names in `comparison_matrix`.
 - Use exactly `Merge Risk` as the criterion name for the risk row (not "Overall Risk" or "Merge risk").
+- All `comparison_matrix` scores must be integers on a **1-10 scale** (1 = worst, 10 = best). Do not use 5-point scales, letter grades, or qualitative labels ("High", "Low").
 - `preferred_team` must be exactly one of: `Team-CL`, `Team-CP`, `hybrid`. Never leave it ambiguous.
 - Number alignment findings `AF-1`, `AF-2`, etc.; implementation findings `F-1`, `F-2`, etc.; cherry-picks `C-1`, `C-2`, etc.; spec drift items `SD-1`, `SD-2`, etc.
 

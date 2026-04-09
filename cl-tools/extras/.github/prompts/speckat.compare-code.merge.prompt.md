@@ -84,12 +84,14 @@ For hybrid recommendations, compare `hybrid_base` values as well.
 
 ### Step 3 — Comparison Matrix Consolidation
 
+All scores must be integers on a **1-10 scale** (1 = worst, 10 = best). If a source review uses a different scale (e.g., 1-5, letter grades, qualitative labels), **normalize** it to 1-10 before consolidation by applying a linear mapping and rounding to the nearest integer.
+
 For each of the 11 criteria in `comparison_matrix`:
 
-1. Collect all reviewer scores for Team-CL and Team-CP.
+1. Collect and normalize all reviewer scores for Team-CL and Team-CP.
 2. Produce a consolidated score: use the **median** score when 3 reviewers are present; use the **lower** score when 2 reviewers diverge (conservative posture).
 3. Synthesize reviewer notes into a single `consolidated_notes` paragraph — deduplicate conceptually equivalent observations, attribute unique insights with `[XX]` notation.
-4. When scores **diverge** (span two or more grades, e.g. High/Low), create a divergence entry in the `divergences` section rather than recording alignment in-line. The comparison matrix shows only consolidated scores.
+4. When scores **diverge** (differ by 3 or more points after normalization), create a divergence entry in the `divergences` section rather than recording alignment in-line. The comparison matrix shows only consolidated scores.
 
 ### Step 4 — Findings Consolidation
 
@@ -221,17 +223,19 @@ merged_report:
   comparison_matrix:                     # same 11 criteria as source reports
     - criterion: string
       team_cl:
-        consolidated_score: string       # median/conservative score
+        consolidated_score: integer      # median/conservative; 1-10 scale
         reviewer_scores:                 # one per source review
           - reviewer: string             # 2-letter key
-            score: string
+            score: integer               # normalized to 1-10
+            original_score: string       # raw value from source (for audit trail)
             notes: string
         consolidated_notes: string       # synthesized; use [XX] for reviewer-specific insights
       team_cp:
-        consolidated_score: string
+        consolidated_score: integer      # median/conservative; 1-10 scale
         reviewer_scores:
           - reviewer: string             # 2-letter key
-            score: string
+            score: integer               # normalized to 1-10
+            original_score: string       # raw value from source (for audit trail)
             notes: string
         consolidated_notes: string
 

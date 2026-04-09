@@ -92,15 +92,17 @@ For each criterion, render a sub-section:
 
 Two-column layout per team:
 
-**Team-CL** — Consolidated: **`<consolidated_score>`**
+**Team-CL** — Consolidated: **`<consolidated_score>`**/10
 
-| Key | Score | Notes |
-|---|---|---|
-| `<reviewer>` | `<score>` | `<notes>` |
+| Key | Score | Original | Notes |
+|---|---|---|---|
+| `<reviewer>` | `<score>`/10 | `<original_score>` | `<notes>` |
 
 > `<consolidated_notes>`
 
 **Team-CP** — same format.
+
+If `original_score` equals the normalized `score` (i.e., original was already 1-10), the Original column may show `—`.
 
 ### 4. Alignment Findings
 
