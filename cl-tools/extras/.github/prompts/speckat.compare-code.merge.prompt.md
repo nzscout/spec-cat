@@ -39,6 +39,16 @@ Before analysis, validate:
 
 If any precondition fails, stop and explain the mismatch to the user.
 
+## File Handling Rules
+
+Treat all input review files as read-only.
+
+- Do not edit, overwrite, rename, or delete any input review YAML files.
+- Do not modify source code files as part of this prompt.
+- You may create new output artifacts required by this prompt, including the merged YAML report and a rendered markdown report.
+- Prefer creating new files rather than modifying existing merged artifacts.
+- If the target merged output file already exists, stop and ask the user whether to overwrite it.
+
 ## Analysis Process
 
 ### Step 1 — Inventory and Key the Reviews
@@ -92,6 +102,58 @@ For each of the 11 criteria in `comparison_matrix`:
 2. Produce a consolidated score: use the **median** score when 3 reviewers are present; use the **lower** score when 2 reviewers diverge (conservative posture).
 3. Synthesize reviewer notes into a single `consolidated_notes` paragraph — deduplicate conceptually equivalent observations, attribute unique insights with `[XX]` notation.
 4. When scores **diverge** (differ by 3 or more points after normalization), create a divergence entry in the `divergences` section rather than recording alignment in-line. The comparison matrix shows only consolidated scores.
+
+### Step 3A — Score Matrix Synthesis
+
+Build a compact score matrix that summarizes reviewer-level and combined team-level scoring.
+
+Use the **10 atomic criteria** below and explicitly **exclude `Overall Quality`** from all score-matrix calculations so the summary does not double-count a reviewer-authored rollup judgment.
+
+Atomic criteria:
+
+1. `PRD Alignment`
+2. `Speckit Alignment`
+3. `Correctness`
+4. `Completeness`
+5. `Code Quality`
+6. `Tests`
+7. `Simplicity`
+8. `Robustness`
+9. `Operational Readiness`
+10. `Merge Risk`
+
+For each team and each reviewer:
+
+1. Compute `average_score` as the arithmetic mean across the 10 atomic criteria.
+2. Compute `weighted_score` as a **real weighted reviewer score** using the default weights below.
+3. Round both values to **2 decimal places**.
+
+For each team, also add a `Combined` row:
+
+1. `average_score` = arithmetic mean of all reviewer `average_score` values for that team.
+2. `weighted_score` = arithmetic mean of all reviewer `weighted_score` values for that team.
+3. Round both values to **2 decimal places**.
+
+Weighted-score formula:
+
+`weighted_score(team, reviewer) = Σ(weight(criterion) × normalized_score(team, reviewer, criterion))`
+
+Default weights for IT implementation merge decisions:
+
+<!-- Informational default weights for score_matrix. These reflect common implementation-review priorities: production correctness, test confidence, robustness, and requirements fit carry the most weight. Only change them when the user explicitly requests a different weighting model. -->
+
+| Criterion | Weight |
+|---|---:|
+| `Correctness` | `0.20` |
+| `Tests` | `0.18` |
+| `Robustness` | `0.15` |
+| `PRD Alignment` | `0.15` |
+| `Completeness` | `0.10` |
+| `Operational Readiness` | `0.08` |
+| `Code Quality` | `0.06` |
+| `Merge Risk` | `0.04` |
+| `Speckit Alignment` | `0.03` |
+| `Simplicity` | `0.01` |
 
 ### Step 4 — Findings Consolidation
 
@@ -163,6 +225,8 @@ Number as `D-1`, `D-2`, etc. Sort by impact — the disagreements that most affe
 
 Emit your complete report as a single fenced YAML block. Do not write any prose, markdown headers, or commentary outside the fence. The YAML block is the complete and only output.
 
+In addition to emitting the fenced YAML block, create a new merged-report file at the required output path below. The source review files remain read-only; only newly created merged artifacts may be written by this prompt.
+
 ### Output File Location and Naming
 
 Save the YAML output to a file under `specs/reviews/` in the repository root. Create the directory if it does not exist.
@@ -187,6 +251,8 @@ Examples:
 | `DATA-1001-null-check-sonnet-4.yaml`, `DATA-1001-null-check-opus-4_6.yaml`, `DATA-1001-null-check-gpt-5_4.yaml` | `specs/reviews/DATA-1001-null-check-merged.yaml` |
 
 The rendered markdown report follows the same convention but with a `.md` extension.
+
+If the prompt later renders markdown from the merged YAML, that markdown file may also be created as a new output artifact. Do not overwrite an existing markdown render without user approval.
 
 ### YAML Schema
 
@@ -238,6 +304,17 @@ merged_report:
             original_score: string       # raw value from source (for audit trail)
             notes: string
         consolidated_notes: string
+
+  score_matrix:
+    criteria_included: [string, ...]     # exactly the 10 atomic criteria used in score calculations
+    excluded_criteria: [string, ...]     # must include "Overall Quality"
+    weights:                             # criterion -> weight used for weighted_score
+      criterion_name: number
+    rows:
+      - team: string                     # "Team-CL" or "Team-CP"
+        reviewer: string                 # 2-letter key or "Combined"
+        average_score: number            # arithmetic mean across atomic criteria; 2 decimals
+        weighted_score: number           # weighted reviewer score; 2 decimals
 
   alignment_findings:                    # merged alignment findings; [] if none
     - id: string                         # "MAF-1", "MAF-2", ...
@@ -320,6 +397,7 @@ merged_report:
 
 - **Synthesize, don't concatenate.** If three reviewers say the same thing in three different ways, write it once clearly. The merged report should be shorter and more focused than any single input — not three times as long.
 - **The divergences section is the single source of truth for all disagreements.** No other section should contain alignment/divergence indicators. Invest the most analytical effort here.
+- The `score_matrix` is a convenience summary, not a replacement for the per-criterion evidence. It should make reviewer tendencies and team-level weighted standing easier to scan, while the `comparison_matrix`, `findings`, and `divergences` remain authoritative.
 - When reviewers agree, be concise — the human doesn't need to re-read what they already know.
 - When reviewers disagree, be thorough — present each perspective fairly and let the human decide.
 - Never fabricate consensus. If reviewers genuinely disagree, say so. The `split` agreement level exists for a reason.

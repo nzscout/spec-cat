@@ -9,6 +9,18 @@ argument-hint: <yaml-file-path>
 $ARGUMENTS
 ```
 
+You MUST consider the user input before proceeding.
+
+## Required Input
+
+This prompt renders a single `speckat.compare-code` YAML review report. It does not render merged reports.
+
+You need the following before proceeding:
+
+1. One YAML file path whose top-level key is `report`
+
+If the provided YAML instead uses the `merged_report` schema, stop and instruct the caller to use `speckat.compare-code.merge-render`.
+
 ## Task
 
 Read the YAML file at the path provided in the user input and render it into a formatted markdown report.
@@ -17,6 +29,15 @@ Read the YAML file at the path provided in the user input and render it into a f
 2. Produce a markdown report that maps exactly to the YAML schema — no sections added, no sections omitted, no section order changed.
 3. Save the rendered markdown to a file next to the YAML source with the same base name but a `.md` extension. For example, if the input is `specs/reviews/DATA-5330-Migrate-v1-to-v2-go-opus-4_6.yaml`, write the output to `specs/reviews/DATA-5330-Migrate-v1-to-v2-go-opus-4_6.md`.
 4. Output only the rendered markdown. Do not add commentary, preamble, or code fences around the output.
+
+## File Handling Rules
+
+Treat the input YAML file as read-only.
+
+- Do not edit, overwrite, rename, or delete the input YAML file.
+- You may create the rendered markdown file required by this prompt.
+- If the target markdown file already exists, stop and ask the user whether to overwrite it.
+- The markdown file created by this prompt is an output artifact, not a source-file modification.
 
 ## Metadata Header
 
