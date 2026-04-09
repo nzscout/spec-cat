@@ -41,13 +41,36 @@ If any precondition fails, stop and explain the mismatch to the user.
 
 ## Analysis Process
 
-### Step 1 — Inventory the Reviews
+### Step 1 — Inventory and Key the Reviews
 
 For each input file, extract:
 
 - `meta.reviewed_by_llm` — the reviewer model identity
 - `meta.generated_at` — when the review was produced
 - `executive_recommendation.preferred_team` — the reviewer's top-level recommendation
+
+Then derive a **2-letter reviewer key** for each reviewer. The key is used throughout the report for compact inline attribution.
+
+Derivation rules:
+
+1. Extract the primary model word from `reviewed_by_llm` (strip vendor prefixes like `claude-`).
+2. Take the first two characters, uppercase.
+3. If two reviewers collide, append the first version digit to the second reviewer (e.g., `SO` and `SO4`).
+
+Common mappings:
+
+| LLM identifier | Key | Reason |
+|---|---|---|
+| `gpt-5.4` | `GP` | **g**p**t** → GP |
+| `opus-4.6` / `claude-opus-4.6` | `OP` | **op**us → OP |
+| `sonnet-4` / `claude-sonnet-4` | `SO` | **so**nnet → SO |
+| `gemini-2.5-pro` | `GE` | **ge**mini → GE |
+| `o3` | `O3` | short name used as-is |
+| `deepseek-v3` | `DE` | **de**epseek → DE |
+
+Record the mapping in `meta.reviewer_keys` so the renderer can produce a legend.
+
+Use these keys throughout the report: in `flagged_by` arrays, `corroborated_by` arrays, `recommended_by` arrays, `perspectives[].reviewer`, and with `[XX]` inline notation inside free-text fields for attribution (e.g., "Uses connection pooling [OP] but lacks retry logic [GP, SO]").
 
 ### Step 2 — Executive Alignment
 
@@ -64,9 +87,9 @@ For hybrid recommendations, compare `hybrid_base` values as well.
 For each of the 11 criteria in `comparison_matrix`:
 
 1. Collect all reviewer scores for Team-CL and Team-CP.
-2. Determine if reviewers **agree** (all scores within one grade of each other, e.g. High/High or High/Medium) or **diverge** (scores span two or more grades, e.g. High/Low).
-3. Produce a consolidated score: use the **median** score when 3 reviewers are present; use the **lower** score when 2 reviewers diverge (conservative posture).
-4. Collect notes from all reviewers — deduplicate semantically equivalent notes, preserve unique observations with attribution.
+2. Produce a consolidated score: use the **median** score when 3 reviewers are present; use the **lower** score when 2 reviewers diverge (conservative posture).
+3. Synthesize reviewer notes into a single `consolidated_notes` paragraph — deduplicate conceptually equivalent observations, attribute unique insights with `[XX]` notation.
+4. When scores **diverge** (span two or more grades, e.g. High/Low), create a divergence entry in the `divergences` section rather than recording alignment in-line. The comparison matrix shows only consolidated scores.
 
 ### Step 4 — Findings Consolidation
 
@@ -74,9 +97,10 @@ Merge the `findings` arrays from all reports:
 
 1. Group findings that describe the **same issue** (same file/location, same category, same team). Two findings are "the same" if they reference the same code location and describe the same problem, even if worded differently.
 2. For each unique finding:
-   - Record which reviewers flagged it (`flagged_by` list).
+   - Record which reviewers flagged it (`flagged_by` list using 2-letter keys).
    - Use the **highest** severity assigned by any reviewer (conservative posture).
-   - Merge descriptions — keep the most detailed version but note material differences in wording as reviewer perspectives.
+   - **Synthesize** a single description — do not concatenate multiple phrasings. Write one clear, concise description that captures the essence of the finding. Use `[XX]` attribution only for observations unique to one reviewer.
+   - When reviewers assign **different severities**, create a divergence entry in the `divergences` section.
 3. Flag findings identified by **only one reviewer** as `single_reviewer: true` — these need extra human scrutiny.
 4. Re-number as `MF-1`, `MF-2`, etc. in the consolidated report.
 
@@ -98,12 +122,17 @@ Same grouping logic as implementation findings:
 
 ### Step 7 — Remediation Plan Synthesis
 
-Build a unified remediation plan:
+Build a unified, deduplicated remediation plan. Group conceptually equivalent steps from different reviewers — even when worded differently — into a single step with a synthesized description.
 
-1. Start with remediation steps that appear in **all** or **most** reports (high confidence).
-2. Add steps that appear in only one report but address findings with severity High or Critical.
-3. Omit steps from a single report that address Low/Medium findings not corroborated by other reviewers (note these in the divergences section for human judgment).
-4. Re-number steps sequentially.
+Sort the plan into three tiers, in this order:
+
+1. **Tier 1 — Unanimous** (`agreement: "all"`): Steps that appear in every input report. These go at the top.
+2. **Tier 2 — Majority** (`agreement: "majority"`): Steps corroborated by most but not all reviewers, plus single-reviewer steps that address High/Critical findings.
+3. **Tier 3 — Single reviewer** (`agreement: "single"`): Steps from one report only, addressing Medium/Low findings. Include these for completeness but the human may deprioritize them.
+
+Within each tier, order by priority (`before-merge` first, then `after-merge`).
+
+Re-number steps sequentially across all tiers.
 
 ### Step 8 — Spec Drift Consolidation
 
@@ -114,15 +143,19 @@ Build a unified remediation plan:
 
 ### Step 9 — Divergence Analysis
 
-This is the most critical section for the human decision-maker. For every point where reviewers **disagree**:
+This is the **single consolidated section** for all reviewer disagreements across the entire report. Every disagreement — whether in executive recommendation, comparison scores, finding severities, cherry-pick recommendations, remediation priorities, or spec drift classifications — must be captured here. No other section should contain inline divergence indicators.
 
-1. Identify the specific disagreement (different scores, different recommendations, different severity, one flags something the others don't).
-2. Present **each reviewer's reasoning** with attribution.
+For every point where reviewers **disagree**:
+
+1. Identify the specific disagreement and tag it with the `area` it came from (e.g., `comparison_matrix / Code Quality`, `findings / MF-3 severity`, `executive_recommendation`).
+2. Present **each reviewer's reasoning** using their 2-letter key.
 3. Assess whether the divergence is:
    - **Perspective difference**: both are valid viewpoints; human judgment required.
    - **Information gap**: one reviewer noticed something the others missed.
    - **Analytical error**: one reviewer's reasoning appears flawed given the evidence.
 4. Provide a consolidation recommendation but label it clearly as the merger's assessment, not a reviewer consensus.
+
+Number as `D-1`, `D-2`, etc. Sort by impact — the disagreements that most affect the merge decision come first.
 
 ## Structured Output
 
@@ -165,9 +198,12 @@ merged_report:
     canonical_base_branch: string        # from source reports (validated identical)
     product_docs: [string, ...]          # union of all source product_docs
     generated_at: string                 # ISO-8601 timestamp of this merge
+    reviewer_keys:                       # 2-letter key → full LLM name
+      XX: string                         # e.g. GP: "gpt-5.4", OP: "opus-4.6"
     source_reviews:                      # one entry per input review file
       - file: string                     # input YAML file path
-        reviewed_by_llm: string          # model identifier from source meta
+        reviewed_by_llm: string          # full model identifier from source meta
+        key: string                      # 2-letter key (matches reviewer_keys)
         generated_at: string             # timestamp from source meta
         preferred_team: string           # from source executive_recommendation
 
@@ -177,7 +213,7 @@ merged_report:
     hybrid_base: string | null           # "Team-CL" or "Team-CP" when hybrid; null otherwise
     summary: string                      # 3-5 sentence synthesis explaining the consolidated position
     per_reviewer:                        # one entry per source review
-      - reviewer: string                 # model identifier
+      - reviewer: string                 # 2-letter key
         preferred_team: string           # that reviewer's recommendation
         hybrid_base: string | null
         summary_excerpt: string          # key quote or paraphrase from the reviewer's summary
@@ -187,55 +223,52 @@ merged_report:
       team_cl:
         consolidated_score: string       # median/conservative score
         reviewer_scores:                 # one per source review
-          - reviewer: string
+          - reviewer: string             # 2-letter key
             score: string
             notes: string
-        alignment: string                # "aligned" or "divergent"
-        consolidated_notes: string       # deduplicated synthesis of all reviewer notes
+        consolidated_notes: string       # synthesized; use [XX] for reviewer-specific insights
       team_cp:
         consolidated_score: string
         reviewer_scores:
-          - reviewer: string
+          - reviewer: string             # 2-letter key
             score: string
             notes: string
-        alignment: string
         consolidated_notes: string
 
   alignment_findings:                    # merged alignment findings; [] if none
     - id: string                         # "MAF-1", "MAF-2", ...
       requirement: string
       expected: string
-      team_cl_observation: string        # synthesized from all reviewers
-      team_cp_observation: string        # synthesized from all reviewers
+      team_cl_observation: string        # synthesized; use [XX] for reviewer-specific details
+      team_cp_observation: string        # synthesized; use [XX] for reviewer-specific details
       impact: string
-      flagged_by: [string, ...]          # list of reviewer model identifiers
+      flagged_by: [string, ...]          # 2-letter keys
       single_reviewer: boolean           # true if only one reviewer flagged this
 
   team_cl:
     tasks_md_status: string              # use most-critical status across reviewers
     tasks_md_notes: string               # synthesized
-    pros: [string, ...]                  # deduplicated union
-    cons: [string, ...]                  # deduplicated union
+    pros: [string, ...]                  # deduplicated union; use [XX] for unique items
+    cons: [string, ...]                  # deduplicated union; use [XX] for unique items
     reviewer_agreement: string           # brief note on how reviewers aligned on this team
 
   team_cp:
     tasks_md_status: string
     tasks_md_notes: string
-    pros: [string, ...]
-    cons: [string, ...]
+    pros: [string, ...]                  # deduplicated union; use [XX] for unique items
+    cons: [string, ...]                  # deduplicated union; use [XX] for unique items
     reviewer_agreement: string
 
   findings:                              # merged implementation findings; [] if none
     - id: string                         # "MF-1", "MF-2", ...
       team: string                       # "Team-CL", "Team-CP", or "Both"
-      severity: string                   # highest across reviewers
+      severity: string                   # highest across reviewers (conservative)
       category: string
-      description: string                # most detailed version
+      description: string                # synthesized — one clear description, not concatenated
       impact: string
       evidence: string
-      flagged_by: [string, ...]
+      flagged_by: [string, ...]          # 2-letter keys
       single_reviewer: boolean
-      severity_agreement: string         # "agreed" or "divergent — <reviewer>: <severity>, ..."
 
   cherry_picks:                          # merged cherry-picks; [] if none
     - id: string                         # "MC-1", "MC-2", ...
@@ -243,15 +276,16 @@ merged_report:
       description: string
       rationale: string
       target_files: [string, ...]
-      recommended_by: [string, ...]      # list of reviewer model identifiers
+      recommended_by: [string, ...]      # 2-letter keys
       confidence: string                 # "high" (multiple reviewers) or "single-reviewer"
 
-  remediation_plan:                      # unified ordered steps
+  remediation_plan:                      # unified ordered steps; sorted by agreement tier
     - step: integer
-      description: string
+      description: string                # synthesized — one description per unique action
       priority: string                   # "before-merge" or "after-merge"
       owner: string
-      corroborated_by: [string, ...]     # which reviewers support this step
+      agreement: string                  # "all", "majority", or "single"
+      corroborated_by: [string, ...]     # 2-letter keys
 
   spec_drift:                            # merged spec drift; [] if none
     - id: string                         # "MSD-1", "MSD-2", ...
@@ -261,33 +295,33 @@ merged_report:
       team_cp_value: string
       description: string
       impact: string
-      flagged_by: [string, ...]
+      flagged_by: [string, ...]          # 2-letter keys
       single_reviewer: boolean
 
-  divergences:                           # THE critical section for human decision-making
+  divergences:                           # THE single section for ALL reviewer disagreements
     - id: string                         # "D-1", "D-2", ...
-      area: string                       # which section/criterion the disagreement falls in
+      area: string                       # source section (e.g. "comparison_matrix / Code Quality")
       description: string                # what exactly the reviewers disagree on
       perspectives:                      # one per disagreeing reviewer
-        - reviewer: string
+        - reviewer: string               # 2-letter key
           position: string               # what this reviewer said/scored
           reasoning: string              # why — quote or paraphrase from the review
       divergence_type: string            # "perspective-difference", "information-gap", or "analytical-error"
       merger_assessment: string          # the consolidation agent's own take (clearly labeled)
 
-  final_verdict: string                  # 3-6 sentence decisive closing statement incorporating all reviewer perspectives
+  final_verdict: string                  # 3-6 sentence decisive closing; synthesized, not concatenated
 ```
 
 ### Reporting Guidance
 
-- The divergences section is the most valuable part of this report. Invest the most analytical effort here.
+- **Synthesize, don't concatenate.** If three reviewers say the same thing in three different ways, write it once clearly. The merged report should be shorter and more focused than any single input — not three times as long.
+- **The divergences section is the single source of truth for all disagreements.** No other section should contain alignment/divergence indicators. Invest the most analytical effort here.
 - When reviewers agree, be concise — the human doesn't need to re-read what they already know.
 - When reviewers disagree, be thorough — present each perspective fairly and let the human decide.
 - Never fabricate consensus. If reviewers genuinely disagree, say so. The `split` agreement level exists for a reason.
 - Use the conservative posture throughout: highest severity, lowest score, most critical classification.
-- Attribute all observations. Every claim should be traceable to a specific reviewer or group of reviewers.
-- Where a single reviewer noticed something the others missed, explicitly flag it with `single_reviewer: true` — this doesn't mean they're wrong, but it means the finding hasn't been independently corroborated.
-- Deduplicate aggressively on substance but preserve unique nuances with attribution.
+- Use 2-letter reviewer keys (`[XX]`) for all attribution. Reserve full model names for the legend and metadata only.
+- Where a single reviewer noticed something the others missed, flag it with `single_reviewer: true` — this doesn't mean they're wrong, but it means the finding hasn't been independently corroborated.
 - The consolidated recommendation in `executive_consensus` must be defensible from the evidence. If the merger disagrees with the majority, explain why in the divergences section.
 
 ### Output Examples

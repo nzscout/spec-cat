@@ -25,10 +25,14 @@ Add this block above all sections:
 ```
 > **Merged report from:** <count> independent reviews
 > **Source reviews:** <comma-separated list of source_reviews[].file>
-> **Reviewers:** <comma-separated list of source_reviews[].reviewed_by_llm>
+> **Reviewers:** <for each reviewer_keys entry: `XX` = full_name, comma-separated>
 > **Agreement level:** <executive_consensus.agreement_level>
 > **Generated:** <merged_report.meta.generated_at>
 ```
+
+Example reviewers line: `> **Reviewers:** `OP` = opus-4.6, `GP` = gpt-5.4, `SO` = sonnet-4`
+
+This line serves as the legend for all 2-letter reviewer keys used throughout the report.
 
 If `agreement_level` is `"split"`, append immediately after the metadata block:
 
@@ -60,7 +64,7 @@ Follow with the `summary` field as a paragraph.
 
 Then render a **Reviewer Positions** table:
 
-| Reviewer | Recommendation | Key Reasoning |
+| Key | Recommendation | Key Reasoning |
 |---|---|---|
 | `<reviewer>` | `<preferred_team>` | `<summary_excerpt>` |
 
@@ -88,17 +92,15 @@ For each criterion, render a sub-section:
 
 Two-column layout per team:
 
-**Team-CL** — Consolidated: **`<consolidated_score>`** (`<alignment>`)
+**Team-CL** — Consolidated: **`<consolidated_score>`**
 
-| Reviewer | Score | Notes |
+| Key | Score | Notes |
 |---|---|---|
 | `<reviewer>` | `<score>` | `<notes>` |
 
-> Consolidated notes: `<consolidated_notes>`
+> `<consolidated_notes>`
 
 **Team-CP** — same format.
-
-If `alignment` is `"divergent"`, prefix the consolidated score with ⚠️.
 
 ### 4. Alignment Findings
 
@@ -134,8 +136,6 @@ Render as a table with columns: ID | Team | Severity | Category | Description | 
 
 Bold the severity value. Bold `single_reviewer` values that are `true`.
 
-If `severity_agreement` is `"divergent"`, add the disagreement details in parentheses after the severity: `**High** (divergent — opus-4: High, gpt-5.4: Medium)`.
-
 If the list is empty, write: "No implementation findings."
 
 ### 8. Cherry-Pick Recommendations
@@ -152,9 +152,25 @@ If the list is empty, write: "No cherry-picks recommended."
 
 Source: `merged_report.remediation_plan`
 
-Render as a table with columns: Step | Description | Priority | Owner | Corroborated By.
+Group steps by `agreement` tier with sub-headings:
+
+#### Unanimous (all reviewers agree)
+
+Steps where `agreement` is `"all"`.
+
+#### Majority
+
+Steps where `agreement` is `"majority"`.
+
+#### Single Reviewer
+
+Steps where `agreement` is `"single"`.
+
+Within each tier, render as a table with columns: Step | Description | Priority | Owner | Corroborated By.
 
 Bold priority values: `**Before merge**` or `**After merge**`.
+
+If a tier has no steps, omit the sub-heading entirely.
 
 ### 10. Spec Files Drift
 
@@ -208,6 +224,7 @@ Render as a plain paragraph.
 
 - Use inline code (backticks) for all file paths, identifiers, method names, and field names.
 - Bold severity values, scores, and confidence levels everywhere they appear.
+- Use 2-letter reviewer keys (`OP`, `GP`, etc.) for all inline attribution throughout the report. Never use full model names outside the metadata header legend.
 - Use `**STALE**` (uppercase) for stale `tasks.md`; `**Current**` for current.
 - Separate all top-level sections with `---` horizontal rules.
 - Do not add any content beyond what the YAML fields provide.
