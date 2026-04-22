@@ -36,7 +36,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout fork (cl/main)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           ref: cl/main
           fetch-depth: 0
@@ -57,10 +57,24 @@ jobs:
 
       - name: Detect new upstream release tag
         id: detect
+        shell: bash
         run: |
-          # Latest upstream release tag (excludes our -cl* tags)
-          LATEST_UPSTREAM=$(git tag --list 'v*' --sort=-version:refname \
-            | grep -v -- '-cl' | head -1)
+          set -euo pipefail
+
+          # Query upstream tags directly so fork-only vcl* tags do not get
+          # mistaken for upstream releases.
+          mapfile -t UPSTREAM_TAGS < <(
+            git ls-remote --tags --refs upstream 'v*' \
+              | awk -F/ '{print $3}' \
+              | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' || true
+          )
+
+          if [ ${#UPSTREAM_TAGS[@]} -eq 0 ]; then
+            LATEST_UPSTREAM=""
+          else
+            LATEST_UPSTREAM=$(printf '%s\n' "${UPSTREAM_TAGS[@]}" | sort -V | tail -n 1)
+          fi
+
           echo "latest_upstream_tag=$LATEST_UPSTREAM" >> "$GITHUB_OUTPUT"
 
           if [ -z "$LATEST_UPSTREAM" ]; then
@@ -68,7 +82,7 @@ jobs:
             echo "No upstream release tags found"
           else
             # Is this tag's commit already in origin/main?
-            TAG_COMMIT=$(git rev-list -n1 "$LATEST_UPSTREAM" 2>/dev/null || true)
+            TAG_COMMIT=$(git rev-parse "refs/tags/$LATEST_UPSTREAM^{commit}" 2>/dev/null || true)
             ALREADY_IN_MAIN=$(git branch -r --contains "$TAG_COMMIT" 2>/dev/null \
               | grep 'origin/main' || true)
             if [ -n "$ALREADY_IN_MAIN" ]; then
@@ -93,16 +107,14 @@ jobs:
       - name: "[A] Fast-forward main to upstream"
         if: steps.detect.outputs.new_release == 'true'
         run: |
-          git checkout main
-          git reset --hard upstream/main
-          git push origin main
-          git checkout cl/main
+          git push origin upstream/main:main
+          git fetch origin main --quiet
 
       - name: "[A] Rebase cl/main onto updated main"
         if: steps.detect.outputs.new_release == 'true'
         id: rebase
         run: |
-          if git rebase origin/main; then
+          if git rebase upstream/main; then
             echo "failed=false" >> "$GITHUB_OUTPUT"
           else
             git rebase --abort || true
@@ -181,7 +193,7 @@ jobs:
         run: |
           UPSTREAM_TAG="${{ steps.detect.outputs.latest_upstream_tag }}"
           BRANCH="sync/${UPSTREAM_TAG}-manual"
-          git checkout -b "$BRANCH" origin/main
+          git checkout -B "$BRANCH" upstream/main
           git push origin "$BRANCH"
           gh pr create \
             --title "⚠️ Manual sync needed: ${UPSTREAM_TAG}" \
@@ -197,27 +209,41 @@ jobs:
           " \
             --base cl/main \
             --head "$BRANCH"
-          echo "::error::Rebase failed — manual PR created: sync/${UPSTREAM_TAG}-manual"
-          exit 1
+          echo "::warning::Rebase failed — manual PR created: sync/${UPSTREAM_TAG}-manual"
 
       # ── PATH B — New commits only: fast-forward main, open review PR ─────
 
       - name: "[B] Fast-forward main to upstream"
         if: steps.detect.outputs.new_release == 'false' && steps.detect.outputs.behind != '0'
         run: |
-          git checkout main
-          git reset --hard upstream/main
-          git push origin main
-          git checkout cl/main
+          git push origin upstream/main:main
+          git fetch origin main --quiet
+
+      - name: "[B] Prepare review branch"
+        if: steps.detect.outputs.new_release == 'false' && steps.detect.outputs.behind != '0'
+        id: review_branch
+        run: |
+          BRANCH="sync/upstream-$(date +%Y%m%d-%H%M)"
+          echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
+          git checkout -b "$BRANCH"
+
+      - name: "[B] Rebase review branch onto updated main"
+        if: steps.detect.outputs.new_release == 'false' && steps.detect.outputs.behind != '0'
+        id: review_rebase
+        run: |
+          if git rebase upstream/main; then
+            echo "failed=false" >> "$GITHUB_OUTPUT"
+          else
+            git rebase --abort || true
+            echo "failed=true" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: "[B] Create review PR for non-release commits"
-        if: steps.detect.outputs.new_release == 'false' && steps.detect.outputs.behind != '0'
+        if: steps.detect.outputs.new_release == 'false' && steps.detect.outputs.behind != '0' && steps.review_rebase.outputs.failed == 'false'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          BRANCH="sync/upstream-$(date +%Y%m%d-%H%M)"
-          git checkout -b "$BRANCH"
-          git rebase origin/main
+          BRANCH="${{ steps.review_branch.outputs.branch }}"
           git push origin "$BRANCH"
           gh pr create \
             --title "chore: upstream commits ($(date +%Y-%m-%d), +${{ steps.detect.outputs.behind }} commits, no release)" \
@@ -236,3 +262,29 @@ jobs:
           " \
             --base cl/main \
             --head "$BRANCH"
+
+      - name: "[B] Rebase failed — create manual-resolution PR"
+        if: steps.detect.outputs.new_release == 'false' && steps.detect.outputs.behind != '0' && steps.review_rebase.outputs.failed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          BRANCH="${{ steps.review_branch.outputs.branch }}-manual"
+          git checkout -B "$BRANCH" upstream/main
+          git push origin "$BRANCH"
+          gh pr create \
+            --title "⚠️ Manual non-release sync needed ($(date +%Y-%m-%d))" \
+            --body "## Manual resolution required
+
+          Automatic rebase of \`cl/main\` onto \`upstream/main\` failed while preparing the non-release sync PR.
+
+          **Commits ahead:** ${{ steps.detect.outputs.behind }}
+
+          ### Steps to resolve
+          1. Check out this branch locally
+          2. Rebase \`cl/main\` onto the latest upstream \`main\`
+          3. Resolve conflicts and push the updated sync branch
+          4. Merge the PR into \`cl/main\` once reviewed
+          " \
+            --base cl/main \
+            --head "$BRANCH"
+          echo "::warning::Non-release sync rebase failed — manual PR created: $BRANCH"
