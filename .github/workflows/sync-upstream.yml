@@ -40,7 +40,7 @@ jobs:
         with:
           ref: cl/main
           fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.RELEASE_PAT }}
 
       - name: Configure git identity
         run: |
@@ -189,7 +189,7 @@ jobs:
       - name: "[A] Rebase failed — create manual-resolution PR"
         if: steps.detect.outputs.new_release == 'true' && steps.rebase.outputs.failed == 'true'
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.RELEASE_PAT }}
         run: |
           UPSTREAM_TAG="${{ steps.detect.outputs.latest_upstream_tag }}"
           BRANCH="sync/${UPSTREAM_TAG}-manual"
@@ -241,7 +241,7 @@ jobs:
       - name: "[B] Create review PR for non-release commits"
         if: steps.detect.outputs.new_release == 'false' && steps.detect.outputs.behind != '0' && steps.review_rebase.outputs.failed == 'false'
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.RELEASE_PAT }}
         run: |
           BRANCH="${{ steps.review_branch.outputs.branch }}"
           git push origin "$BRANCH"
@@ -266,7 +266,7 @@ jobs:
       - name: "[B] Rebase failed — create manual-resolution PR"
         if: steps.detect.outputs.new_release == 'false' && steps.detect.outputs.behind != '0' && steps.review_rebase.outputs.failed == 'true'
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.RELEASE_PAT }}
         run: |
           BRANCH="${{ steps.review_branch.outputs.branch }}-manual"
           git checkout -B "$BRANCH" upstream/main
