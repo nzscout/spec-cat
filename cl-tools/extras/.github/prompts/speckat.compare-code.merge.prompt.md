@@ -19,7 +19,7 @@ This prompt consolidates independent review reports. It does NOT perform a new c
 You need all of the following before proceeding:
 
 1. Two or three YAML file paths — each a `speckat.compare-code` report produced by a different LLM
-2. All files must review the same pair of implementations (same `team_cl_feature_path` and `team_cp_feature_path`)
+2. All files must review the same pair of implementations (same normalized `team_cl_feature_path` and normalized `team_cp_feature_path`)
 
 Interpret the arguments as an ordered list of YAML file paths:
 
@@ -34,8 +34,41 @@ If fewer than 2 arguments are provided, stop and ask the user for the missing pa
 Before analysis, validate:
 
 1. All input files are valid YAML matching the `speckat.compare-code` schema (top-level `report` key with `meta`, `executive_recommendation`, `comparison_matrix`, etc.).
-2. All reports review the same feature pair — `meta.team_cl_feature_path` and `meta.team_cp_feature_path` must match across all inputs.
+2. All reports review the same feature pair — compare `meta.team_cl_feature_path` and `meta.team_cp_feature_path` using normalized feature identity, not raw string equality.
 3. All reports use the same `meta.canonical_base_branch`.
+
+Normalize feature paths before comparing them:
+
+1. Convert backslashes to forward slashes and trim trailing slashes.
+2. If the path is absolute, strip everything through `/specs/`.
+3. Canonicalize the result to repo-relative `specs/<feature-directory>` form.
+4. Derive the feature alias stem by removing the final hyphen-delimited suffix segment from `<feature-directory>`.
+
+Validation rules after normalization:
+
+1. All `team_cl_feature_path` values across inputs must canonicalize to the same Team-CL feature directory.
+2. All `team_cp_feature_path` values across inputs must canonicalize to the same Team-CP feature directory.
+3. The CL and CP feature directories must share the same feature alias stem.
+
+Valid examples:
+
+- `DATA-5330-2-Migrate-v1-to-v2-go-CL`
+- `DATA-5330-2-Migrate-v1-to-v2-go-CP`
+
+- `DATA-5330-2-Migrate-v1-to-v2-go-A`
+- `DATA-5330-2-Migrate-v1-to-v2-go-B`
+
+Reject example:
+
+- `DATA-5330-2-Migrate-v1-to-v2-go-CL`
+- `DATA-5331-Migrate-v1-to-v2-go-CP`
+
+Examples that must be treated as equivalent:
+
+- `specs/DATA-5330-2-Migrate-v1-to-v2-go-CL`
+- `C:/Projects/Eclypsium/VLS.Cloud.CL/specs/DATA-5330-2-Migrate-v1-to-v2-go-CL`
+
+Only fail this precondition when the normalized feature identities differ or the alias stems do not match. Do not fail solely because one review used an absolute worktree path and another used a repo-relative path.
 
 If any precondition fails, stop and explain the mismatch to the user.
 
@@ -261,8 +294,8 @@ The YAML must contain a top-level `merged_report` key with the following structu
 ```yaml
 merged_report:
   meta:
-    team_cl_feature_path: string         # from source reports (validated identical)
-    team_cp_feature_path: string         # from source reports (validated identical)
+    team_cl_feature_path: string         # canonical normalized repo-relative path derived from source reports, e.g. specs/<feature-directory>
+    team_cp_feature_path: string         # canonical normalized repo-relative path derived from source reports, e.g. specs/<feature-directory>
     canonical_base_branch: string        # from source reports (validated identical)
     product_docs: [string, ...]          # union of all source product_docs
     generated_at: string                 # ISO-8601 timestamp of this merge
@@ -403,6 +436,7 @@ merged_report:
 - Never fabricate consensus. If reviewers genuinely disagree, say so. The `split` agreement level exists for a reason.
 - Use the conservative posture throughout: highest severity, lowest score, most critical classification.
 - Use 2-letter reviewer keys (`[XX]`) for all attribution. Reserve full model names for the legend and metadata only.
+- Treat absolute worktree paths and repo-relative paths as equivalent when they normalize to the same `specs/<feature-directory>` identity. Emit the canonical repo-relative form in `merged_report.meta.team_cl_feature_path` and `merged_report.meta.team_cp_feature_path`.
 - Where a single reviewer noticed something the others missed, flag it with `single_reviewer: true` — this doesn't mean they're wrong, but it means the finding hasn't been independently corroborated.
 - The consolidated recommendation in `executive_consensus` must be defensible from the evidence. If the merger disagrees with the majority, explain why in the divergences section.
 

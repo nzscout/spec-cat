@@ -481,6 +481,16 @@ Most agents (Bob, Claude, Windsurf, etc.) use `MarkdownIntegration`:
 5. **Directory naming**: Follow agent-specific conventions exactly (check existing agents for patterns).
 6. **Help text inconsistency**: Update all user-facing text consistently (help strings, docstrings, README, error messages).
 
+## Repository-Specific Sync Notes
+
+When working on `.github/workflows/sync-upstream.yml` in this repo:
+
+1. **Do not trust GitHub reruns for workflow edits**: reruns execute the workflow snapshot from the original run's commit. After changing the workflow file, trigger a fresh `workflow_dispatch` run on `cl/main` to validate the new logic.
+2. **Expect workflow-file auth restrictions**: if upstream changes include `.github/workflows`, the default `GITHUB_TOKEN` path is not sufficient for the sync push. Use `RELEASE_PAT`, and if it is missing, prefer a guarded skip with a rerun instruction rather than failing late.
+3. **Open PRs only after branch visibility settles**: after pushing `sync/*` branches, wait until GitHub's branch API can see the branch before calling `gh pr create`. Use explicit `--repo` and owner-qualified `--head` arguments.
+4. **Treat PowerShell Git Flow support as CL-owned patch behavior**: if upstream `scripts/powershell/common.ps1` changes, re-check `cl-tools/patches/apply.ps1`, `cl-tools/patches/snippets/common-test-feature-branch-get-feature-name.ps1`, and `tests/test_gitflow_powershell.py` together. The `feature/<name>` acceptance and feature-dir stripping are enforced by the CL patch/tests, not by upstream defaults.
+5. **For manual sync PRs, validate before merge**: resolve conflicts in a sibling worktree if the main repo is dirty, then run at least the targeted regression tests and ideally the full `uv run pytest -q` suite before merging.
+
 ## Future Considerations
 
 When adding new agents:
