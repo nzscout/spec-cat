@@ -40,7 +40,7 @@ jobs:
         with:
           ref: cl/main
           fetch-depth: 0
-          token: ${{ secrets.RELEASE_PAT }}
+          token: ${{ secrets.RELEASE_PAT || github.token }}
 
       - name: Configure git identity
         run: |
@@ -98,20 +98,46 @@ jobs:
           BEHIND=$(git rev-list origin/main..upstream/main --count)
           echo "behind=$BEHIND" >> "$GITHUB_OUTPUT"
 
+      - name: Check sync auth prerequisites
+        id: sync_guard
+        if: steps.detect.outputs.new_release == 'true' || steps.detect.outputs.behind != '0'
+        shell: bash
+        env:
+          RELEASE_PAT: ${{ secrets.RELEASE_PAT }}
+        run: |
+          set -euo pipefail
+
+          BLOCKED=false
+
+          if [ -z "$RELEASE_PAT" ] && ! git diff --quiet origin/main..upstream/main -- .github/workflows; then
+            BLOCKED=true
+            echo "::warning::Auto-sync requires RELEASE_PAT because upstream includes changes under .github/workflows."
+          fi
+
+          echo "blocked=$BLOCKED" >> "$GITHUB_OUTPUT"
+
       - name: Nothing to do
         if: steps.detect.outputs.new_release == 'false' && steps.detect.outputs.behind == '0'
         run: echo "Fork is already up to date with upstream."
 
+      - name: Sync blocked — missing RELEASE_PAT for workflow file updates
+        if: steps.sync_guard.outputs.blocked == 'true'
+        run: |
+          echo "### Auto-sync skipped" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Upstream changes include files under \`.github/workflows\`, but \`RELEASE_PAT\` is not configured for this repository." >> "$GITHUB_STEP_SUMMARY"
+          echo "Configure \`RELEASE_PAT\` with repo + workflow scope, then rerun this workflow." >> "$GITHUB_STEP_SUMMARY"
+
       # ── PATH A — New release tag: auto-sync + auto-tag ───────────────────
 
       - name: "[A] Fast-forward main to upstream"
-        if: steps.detect.outputs.new_release == 'true'
+        if: steps.detect.outputs.new_release == 'true' && steps.sync_guard.outputs.blocked != 'true'
         run: |
           git push origin upstream/main:main
           git fetch origin main --quiet
 
       - name: "[A] Rebase cl/main onto updated main"
-        if: steps.detect.outputs.new_release == 'true'
+        if: steps.detect.outputs.new_release == 'true' && steps.sync_guard.outputs.blocked != 'true'
         id: rebase
         run: |
           if git rebase upstream/main; then
@@ -122,7 +148,7 @@ jobs:
           fi
 
       - name: "[A] Verify patch anchors"
-        if: steps.detect.outputs.new_release == 'true' && steps.rebase.outputs.failed == 'false'
+        if: steps.detect.outputs.new_release == 'true' && steps.sync_guard.outputs.blocked != 'true' && steps.rebase.outputs.failed == 'false'
         id: patch_check
         shell: pwsh
         run: |
@@ -149,7 +175,7 @@ jobs:
           }
 
       - name: "[A] Compute CL tag from vcl* version"
-        if: steps.detect.outputs.new_release == 'true' && steps.rebase.outputs.failed == 'false'
+        if: steps.detect.outputs.new_release == 'true' && steps.sync_guard.outputs.blocked != 'true' && steps.rebase.outputs.failed == 'false'
         id: cl_tag
         run: |
           UPSTREAM_TAG="${{ steps.detect.outputs.latest_upstream_tag }}"
@@ -166,14 +192,14 @@ jobs:
           echo "Computed CL tag: $CL_TAG (CL version: $CL_VERSION)"
 
       - name: "[A] Push cl/main and tag — triggers release-cl.yml"
-        if: steps.detect.outputs.new_release == 'true' && steps.rebase.outputs.failed == 'false'
+        if: steps.detect.outputs.new_release == 'true' && steps.sync_guard.outputs.blocked != 'true' && steps.rebase.outputs.failed == 'false'
         run: |
           git push origin cl/main --force-with-lease
           git tag "${{ steps.cl_tag.outputs.cl_tag }}"
           git push origin "${{ steps.cl_tag.outputs.cl_tag }}"
 
       - name: "[A] Summary"
-        if: steps.detect.outputs.new_release == 'true' && steps.rebase.outputs.failed == 'false'
+        if: steps.detect.outputs.new_release == 'true' && steps.sync_guard.outputs.blocked != 'true' && steps.rebase.outputs.failed == 'false'
         run: |
           ANCHOR="${{ steps.patch_check.outputs.anchor_ok }}"
           TAG="${{ steps.cl_tag.outputs.cl_tag }}"
@@ -187,9 +213,9 @@ jobs:
           echo "**Install:** \`uv tool install specify-cli --force --from git+https://github.com/nzscout/spec-cat.git@${TAG}\`" >> $GITHUB_STEP_SUMMARY
 
       - name: "[A] Rebase failed — create manual-resolution PR"
-        if: steps.detect.outputs.new_release == 'true' && steps.rebase.outputs.failed == 'true'
+        if: steps.detect.outputs.new_release == 'true' && steps.sync_guard.outputs.blocked != 'true' && steps.rebase.outputs.failed == 'true'
         env:
-          GH_TOKEN: ${{ secrets.RELEASE_PAT }}
+          GH_TOKEN: ${{ secrets.RELEASE_PAT || github.token }}
         run: |
           UPSTREAM_TAG="${{ steps.detect.outputs.latest_upstream_tag }}"
           BRANCH="sync/${UPSTREAM_TAG}-manual"
@@ -214,13 +240,13 @@ jobs:
       # ── PATH B — New commits only: fast-forward main, open review PR ─────
 
       - name: "[B] Fast-forward main to upstream"
-        if: steps.detect.outputs.new_release == 'false' && steps.detect.outputs.behind != '0'
+        if: steps.detect.outputs.new_release == 'false' && steps.detect.outputs.behind != '0' && steps.sync_guard.outputs.blocked != 'true'
         run: |
           git push origin upstream/main:main
           git fetch origin main --quiet
 
       - name: "[B] Prepare review branch"
-        if: steps.detect.outputs.new_release == 'false' && steps.detect.outputs.behind != '0'
+        if: steps.detect.outputs.new_release == 'false' && steps.detect.outputs.behind != '0' && steps.sync_guard.outputs.blocked != 'true'
         id: review_branch
         run: |
           BRANCH="sync/upstream-$(date +%Y%m%d-%H%M)"
@@ -228,7 +254,7 @@ jobs:
           git checkout -b "$BRANCH"
 
       - name: "[B] Rebase review branch onto updated main"
-        if: steps.detect.outputs.new_release == 'false' && steps.detect.outputs.behind != '0'
+        if: steps.detect.outputs.new_release == 'false' && steps.detect.outputs.behind != '0' && steps.sync_guard.outputs.blocked != 'true'
         id: review_rebase
         run: |
           if git rebase upstream/main; then
@@ -239,9 +265,9 @@ jobs:
           fi
 
       - name: "[B] Create review PR for non-release commits"
-        if: steps.detect.outputs.new_release == 'false' && steps.detect.outputs.behind != '0' && steps.review_rebase.outputs.failed == 'false'
+        if: steps.detect.outputs.new_release == 'false' && steps.detect.outputs.behind != '0' && steps.sync_guard.outputs.blocked != 'true' && steps.review_rebase.outputs.failed == 'false'
         env:
-          GH_TOKEN: ${{ secrets.RELEASE_PAT }}
+          GH_TOKEN: ${{ secrets.RELEASE_PAT || github.token }}
         run: |
           BRANCH="${{ steps.review_branch.outputs.branch }}"
           git push origin "$BRANCH"
@@ -264,9 +290,9 @@ jobs:
             --head "$BRANCH"
 
       - name: "[B] Rebase failed — create manual-resolution PR"
-        if: steps.detect.outputs.new_release == 'false' && steps.detect.outputs.behind != '0' && steps.review_rebase.outputs.failed == 'true'
+        if: steps.detect.outputs.new_release == 'false' && steps.detect.outputs.behind != '0' && steps.sync_guard.outputs.blocked != 'true' && steps.review_rebase.outputs.failed == 'true'
         env:
-          GH_TOKEN: ${{ secrets.RELEASE_PAT }}
+          GH_TOKEN: ${{ secrets.RELEASE_PAT || github.token }}
         run: |
           BRANCH="${{ steps.review_branch.outputs.branch }}-manual"
           git checkout -B "$BRANCH" upstream/main
