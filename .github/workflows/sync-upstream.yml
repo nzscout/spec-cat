@@ -219,9 +219,21 @@ jobs:
         run: |
           UPSTREAM_TAG="${{ steps.detect.outputs.latest_upstream_tag }}"
           BRANCH="sync/${UPSTREAM_TAG}-manual"
+          HEAD_REF="${GITHUB_REPOSITORY_OWNER}:${BRANCH}"
+          ENCODED_BRANCH="${BRANCH//\//%2F}"
           git checkout -B "$BRANCH" upstream/main
-          git push origin "$BRANCH"
+          git push --set-upstream origin "$BRANCH"
+
+          for attempt in 1 2 3 4 5; do
+            if gh api "repos/${GITHUB_REPOSITORY}/branches/${ENCODED_BRANCH}" >/dev/null 2>&1; then
+              break
+            fi
+            echo "Waiting for GitHub to recognize branch ${BRANCH} (attempt ${attempt})"
+            sleep 3
+          done
+
           gh pr create \
+            --repo "$GITHUB_REPOSITORY" \
             --title "⚠️ Manual sync needed: ${UPSTREAM_TAG}" \
             --body "## Manual resolution required
 
@@ -234,7 +246,7 @@ jobs:
           4. Run: \`git tag ${UPSTREAM_TAG}-cl1 && git push origin ${UPSTREAM_TAG}-cl1\`
           " \
             --base cl/main \
-            --head "$BRANCH"
+            --head "$HEAD_REF"
           echo "::warning::Rebase failed — manual PR created: sync/${UPSTREAM_TAG}-manual"
 
       # ── PATH B — New commits only: fast-forward main, open review PR ─────
@@ -270,8 +282,20 @@ jobs:
           GH_TOKEN: ${{ secrets.RELEASE_PAT || github.token }}
         run: |
           BRANCH="${{ steps.review_branch.outputs.branch }}"
-          git push origin "$BRANCH"
+          HEAD_REF="${GITHUB_REPOSITORY_OWNER}:${BRANCH}"
+          ENCODED_BRANCH="${BRANCH//\//%2F}"
+          git push --set-upstream origin "$BRANCH"
+
+          for attempt in 1 2 3 4 5; do
+            if gh api "repos/${GITHUB_REPOSITORY}/branches/${ENCODED_BRANCH}" >/dev/null 2>&1; then
+              break
+            fi
+            echo "Waiting for GitHub to recognize branch ${BRANCH} (attempt ${attempt})"
+            sleep 3
+          done
+
           gh pr create \
+            --repo "$GITHUB_REPOSITORY" \
             --title "chore: upstream commits ($(date +%Y-%m-%d), +${{ steps.detect.outputs.behind }} commits, no release)" \
             --body "## Upstream non-release sync
 
@@ -287,7 +311,7 @@ jobs:
           - [ ] Close this PR if no action needed (release sync will handle the rest)
           " \
             --base cl/main \
-            --head "$BRANCH"
+            --head "$HEAD_REF"
 
       - name: "[B] Rebase failed — create manual-resolution PR"
         if: steps.detect.outputs.new_release == 'false' && steps.detect.outputs.behind != '0' && steps.sync_guard.outputs.blocked != 'true' && steps.review_rebase.outputs.failed == 'true'
@@ -295,9 +319,21 @@ jobs:
           GH_TOKEN: ${{ secrets.RELEASE_PAT || github.token }}
         run: |
           BRANCH="${{ steps.review_branch.outputs.branch }}-manual"
+          HEAD_REF="${GITHUB_REPOSITORY_OWNER}:${BRANCH}"
+          ENCODED_BRANCH="${BRANCH//\//%2F}"
           git checkout -B "$BRANCH" upstream/main
-          git push origin "$BRANCH"
+          git push --set-upstream origin "$BRANCH"
+
+          for attempt in 1 2 3 4 5; do
+            if gh api "repos/${GITHUB_REPOSITORY}/branches/${ENCODED_BRANCH}" >/dev/null 2>&1; then
+              break
+            fi
+            echo "Waiting for GitHub to recognize branch ${BRANCH} (attempt ${attempt})"
+            sleep 3
+          done
+
           gh pr create \
+            --repo "$GITHUB_REPOSITORY" \
             --title "⚠️ Manual non-release sync needed ($(date +%Y-%m-%d))" \
             --body "## Manual resolution required
 
@@ -312,5 +348,5 @@ jobs:
           4. Merge the PR into \`cl/main\` once reviewed
           " \
             --base cl/main \
-            --head "$BRANCH"
+            --head "$HEAD_REF"
           echo "::warning::Non-release sync rebase failed — manual PR created: $BRANCH"
