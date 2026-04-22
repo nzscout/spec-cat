@@ -1,0 +1,352 @@
+name: Sync upstream spec-kit
+
+# Runs weekly and on-demand.
+#
+# Branch model:
+#   main     — clean mirror of upstream github/spec-kit. Never has custom code.
+#   cl/main  — CL customizations rebased on top of main. This is the install branch.
+#
+# Two paths depending on what changed upstream:
+#
+# PATH A — New upstream RELEASE TAG detected (e.g. v0.5.2):
+#   1. Fast-forward main to upstream/main
+#   2. Rebase cl/main onto main
+#   3. Compute CL tag: v{upstream-version}-cl1 (or -cl2 if already exists)
+#   4. Push cl/main + tag → triggers release-cl.yml automatically
+#   5. On rebase failure: create a manual-resolution PR instead
+#
+# PATH B — New commits only (no new release tag):
+#   1. Fast-forward main to upstream/main
+#   2. Create a sync/upstream-* branch and PR against cl/main for review
+#
+# Install (pinned):  uv tool install specify-cli --from git+https://github.com/nzscout/spec-cat.git@v0.5.2-cl1
+# Install (latest):  uv tool install specify-cli --from git+https://github.com/nzscout/spec-cat.git@cl/main
+
+on:
+  schedule:
+    - cron: '0 9 * * 1'   # Every Monday 09:00 UTC
+  workflow_dispatch:        # Manual trigger from GitHub UI
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout fork (cl/main)
+        uses: actions/checkout@v6
+        with:
+          ref: cl/main
+          fetch-depth: 0
+          token: ${{ secrets.RELEASE_PAT || github.token }}
+
+      - name: Configure git identity
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Add upstream remote and fetch
+        run: |
+          git remote add upstream https://github.com/github/spec-kit.git || true
+          git fetch upstream main --tags
+          git fetch origin main --tags
+
+      # ── Detect what changed upstream ─────────────────────────────────────
+
+      - name: Detect new upstream release tag
+        id: detect
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # Query upstream tags directly so fork-only vcl* tags do not get
+          # mistaken for upstream releases.
+          mapfile -t UPSTREAM_TAGS < <(
+            git ls-remote --tags --refs upstream 'v*' \
+              | awk -F/ '{print $3}' \
+              | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' || true
+          )
+
+          if [ ${#UPSTREAM_TAGS[@]} -eq 0 ]; then
+            LATEST_UPSTREAM=""
+          else
+            LATEST_UPSTREAM=$(printf '%s\n' "${UPSTREAM_TAGS[@]}" | sort -V | tail -n 1)
+          fi
+
+          echo "latest_upstream_tag=$LATEST_UPSTREAM" >> "$GITHUB_OUTPUT"
+
+          if [ -z "$LATEST_UPSTREAM" ]; then
+            echo "new_release=false" >> "$GITHUB_OUTPUT"
+            echo "No upstream release tags found"
+          else
+            # Is this tag's commit already in origin/main?
+            TAG_COMMIT=$(git rev-parse "refs/tags/$LATEST_UPSTREAM^{commit}" 2>/dev/null || true)
+            ALREADY_IN_MAIN=$(git branch -r --contains "$TAG_COMMIT" 2>/dev/null \
+              | grep 'origin/main' || true)
+            if [ -n "$ALREADY_IN_MAIN" ]; then
+              echo "new_release=false" >> "$GITHUB_OUTPUT"
+              echo "Upstream tag $LATEST_UPSTREAM already in origin/main — nothing to do"
+            else
+              echo "new_release=true" >> "$GITHUB_OUTPUT"
+              echo "New upstream release detected: $LATEST_UPSTREAM"
+            fi
+          fi
+
+          # Also count plain commits (for PATH B)
+          BEHIND=$(git rev-list origin/main..upstream/main --count)
+          echo "behind=$BEHIND" >> "$GITHUB_OUTPUT"
+
+      - name: Check sync auth prerequisites
+        id: sync_guard
+        if: steps.detect.outputs.new_release == 'true' || steps.detect.outputs.behind != '0'
+        shell: bash
+        env:
+          RELEASE_PAT: ${{ secrets.RELEASE_PAT }}
+        run: |
+          set -euo pipefail
+
+          BLOCKED=false
+
+          if [ -z "$RELEASE_PAT" ] && ! git diff --quiet origin/main..upstream/main -- .github/workflows; then
+            BLOCKED=true
+            echo "::warning::Auto-sync requires RELEASE_PAT because upstream includes changes under .github/workflows."
+          fi
+
+          echo "blocked=$BLOCKED" >> "$GITHUB_OUTPUT"
+
+      - name: Nothing to do
+        if: steps.detect.outputs.new_release == 'false' && steps.detect.outputs.behind == '0'
+        run: echo "Fork is already up to date with upstream."
+
+      - name: Sync blocked — missing RELEASE_PAT for workflow file updates
+        if: steps.sync_guard.outputs.blocked == 'true'
+        run: |
+          echo "### Auto-sync skipped" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Upstream changes include files under \`.github/workflows\`, but \`RELEASE_PAT\` is not configured for this repository." >> "$GITHUB_STEP_SUMMARY"
+          echo "Configure \`RELEASE_PAT\` with repo + workflow scope, then rerun this workflow." >> "$GITHUB_STEP_SUMMARY"
+
+      # ── PATH A — New release tag: auto-sync + auto-tag ───────────────────
+
+      - name: "[A] Fast-forward main to upstream"
+        if: steps.detect.outputs.new_release == 'true' && steps.sync_guard.outputs.blocked != 'true'
+        run: |
+          git push origin upstream/main:main
+          git fetch origin main --quiet
+
+      - name: "[A] Rebase cl/main onto updated main"
+        if: steps.detect.outputs.new_release == 'true' && steps.sync_guard.outputs.blocked != 'true'
+        id: rebase
+        run: |
+          if git rebase upstream/main; then
+            echo "failed=false" >> "$GITHUB_OUTPUT"
+          else
+            git rebase --abort || true
+            echo "failed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: "[A] Verify patch anchors"
+        if: steps.detect.outputs.new_release == 'true' && steps.sync_guard.outputs.blocked != 'true' && steps.rebase.outputs.failed == 'false'
+        id: patch_check
+        shell: pwsh
+        run: |
+          $anchorWarnings = @()
+          $templateFile = "templates/commands/specify.md"
+          if (Test-Path $templateFile) {
+              $content = Get-Content $templateFile -Raw
+              if ($content -notmatch '1\. \*\*Generate a concise short name\*\*') {
+                  $anchorWarnings += "specify step-1 anchor not found"
+              }
+                if ($content -notmatch '2\. \*\*(Branch creation|Create the feature branch)\*\*') {
+                  $anchorWarnings += "specify step-2 anchor not found"
+              }
+          } else {
+              $anchorWarnings += "templates/commands/specify.md not found"
+          }
+          if ($anchorWarnings.Count -gt 0) {
+              Write-Host "::warning::PATCH ANCHOR CHECK FAILED:"
+              $anchorWarnings | ForEach-Object { Write-Host "::warning::  - $_" }
+              "anchor_ok=false" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          } else {
+              Write-Host "All patch anchors verified OK"
+              "anchor_ok=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          }
+
+      - name: "[A] Compute CL tag from vcl* version"
+        if: steps.detect.outputs.new_release == 'true' && steps.sync_guard.outputs.blocked != 'true' && steps.rebase.outputs.failed == 'false'
+        id: cl_tag
+        run: |
+          UPSTREAM_TAG="${{ steps.detect.outputs.latest_upstream_tag }}"
+          # The CL version is the latest vcl* tag — independent of upstream versioning
+          CL_VERSION=$(git tag --list 'vcl*' --sort=-version:refname | head -1)
+          if [ -z "$CL_VERSION" ]; then
+            echo "::error::No vcl* tag found. Create one first: git tag vcl1 && git push origin vcl1"
+            exit 1
+          fi
+          # vcl1.1 → cl1.1
+          CL_SUFFIX="${CL_VERSION#v}"
+          CL_TAG="${UPSTREAM_TAG}-${CL_SUFFIX}"
+          echo "cl_tag=$CL_TAG" >> "$GITHUB_OUTPUT"
+          echo "Computed CL tag: $CL_TAG (CL version: $CL_VERSION)"
+
+      - name: "[A] Push cl/main and tag — triggers release-cl.yml"
+        if: steps.detect.outputs.new_release == 'true' && steps.sync_guard.outputs.blocked != 'true' && steps.rebase.outputs.failed == 'false'
+        run: |
+          git push origin cl/main --force-with-lease
+          git tag "${{ steps.cl_tag.outputs.cl_tag }}"
+          git push origin "${{ steps.cl_tag.outputs.cl_tag }}"
+
+      - name: "[A] Summary"
+        if: steps.detect.outputs.new_release == 'true' && steps.sync_guard.outputs.blocked != 'true' && steps.rebase.outputs.failed == 'false'
+        run: |
+          ANCHOR="${{ steps.patch_check.outputs.anchor_ok }}"
+          TAG="${{ steps.cl_tag.outputs.cl_tag }}"
+          echo "### Auto-synced: ${{ steps.detect.outputs.latest_upstream_tag }} → ${TAG}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- \`main\` fast-forwarded to upstream" >> $GITHUB_STEP_SUMMARY
+          echo "- \`cl/main\` rebased and pushed" >> $GITHUB_STEP_SUMMARY
+          echo "- Tag \`${TAG}\` pushed — \`release-cl.yml\` will create the GitHub Release" >> $GITHUB_STEP_SUMMARY
+          echo "- Patch anchors: $([ '$ANCHOR' = 'true' ] && echo 'OK' || echo 'WARNING — check annotations')" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Install:** \`uv tool install specify-cli --force --from git+https://github.com/nzscout/spec-cat.git@${TAG}\`" >> $GITHUB_STEP_SUMMARY
+
+      - name: "[A] Rebase failed — create manual-resolution PR"
+        if: steps.detect.outputs.new_release == 'true' && steps.sync_guard.outputs.blocked != 'true' && steps.rebase.outputs.failed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PAT || github.token }}
+        run: |
+          UPSTREAM_TAG="${{ steps.detect.outputs.latest_upstream_tag }}"
+          BRANCH="sync/${UPSTREAM_TAG}-manual"
+          HEAD_REF="${GITHUB_REPOSITORY_OWNER}:${BRANCH}"
+          ENCODED_BRANCH="${BRANCH//\//%2F}"
+          git checkout -B "$BRANCH" upstream/main
+          git push --set-upstream origin "$BRANCH"
+
+          for attempt in 1 2 3 4 5; do
+            if gh api "repos/${GITHUB_REPOSITORY}/branches/${ENCODED_BRANCH}" >/dev/null 2>&1; then
+              break
+            fi
+            echo "Waiting for GitHub to recognize branch ${BRANCH} (attempt ${attempt})"
+            sleep 3
+          done
+
+          gh pr create \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "⚠️ Manual sync needed: ${UPSTREAM_TAG}" \
+            --body "## Manual resolution required
+
+          Automatic rebase of \`cl/main\` onto \`${UPSTREAM_TAG}\` failed due to conflicts.
+
+          ### Steps to resolve
+          1. Check out this branch locally
+          2. Resolve conflicts, then \`git rebase --continue\`
+          3. Push resolved \`cl/main\`
+          4. Run: \`git tag ${UPSTREAM_TAG}-cl1 && git push origin ${UPSTREAM_TAG}-cl1\`
+          " \
+            --base cl/main \
+            --head "$HEAD_REF"
+          echo "::warning::Rebase failed — manual PR created: sync/${UPSTREAM_TAG}-manual"
+
+      # ── PATH B — New commits only: fast-forward main, open review PR ─────
+
+      - name: "[B] Fast-forward main to upstream"
+        if: steps.detect.outputs.new_release == 'false' && steps.detect.outputs.behind != '0' && steps.sync_guard.outputs.blocked != 'true'
+        run: |
+          git push origin upstream/main:main
+          git fetch origin main --quiet
+
+      - name: "[B] Prepare review branch"
+        if: steps.detect.outputs.new_release == 'false' && steps.detect.outputs.behind != '0' && steps.sync_guard.outputs.blocked != 'true'
+        id: review_branch
+        run: |
+          BRANCH="sync/upstream-$(date +%Y%m%d-%H%M)"
+          echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
+          git checkout -b "$BRANCH"
+
+      - name: "[B] Rebase review branch onto updated main"
+        if: steps.detect.outputs.new_release == 'false' && steps.detect.outputs.behind != '0' && steps.sync_guard.outputs.blocked != 'true'
+        id: review_rebase
+        run: |
+          if git rebase upstream/main; then
+            echo "failed=false" >> "$GITHUB_OUTPUT"
+          else
+            git rebase --abort || true
+            echo "failed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: "[B] Create review PR for non-release commits"
+        if: steps.detect.outputs.new_release == 'false' && steps.detect.outputs.behind != '0' && steps.sync_guard.outputs.blocked != 'true' && steps.review_rebase.outputs.failed == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PAT || github.token }}
+        run: |
+          BRANCH="${{ steps.review_branch.outputs.branch }}"
+          HEAD_REF="${GITHUB_REPOSITORY_OWNER}:${BRANCH}"
+          ENCODED_BRANCH="${BRANCH//\//%2F}"
+          git push --set-upstream origin "$BRANCH"
+
+          for attempt in 1 2 3 4 5; do
+            if gh api "repos/${GITHUB_REPOSITORY}/branches/${ENCODED_BRANCH}" >/dev/null 2>&1; then
+              break
+            fi
+            echo "Waiting for GitHub to recognize branch ${BRANCH} (attempt ${attempt})"
+            sleep 3
+          done
+
+          gh pr create \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "chore: upstream commits ($(date +%Y-%m-%d), +${{ steps.detect.outputs.behind }} commits, no release)" \
+            --body "## Upstream non-release sync
+
+          New commits on \`github/spec-kit\` main that are not yet part of a release tag.
+
+          **Commits ahead:** ${{ steps.detect.outputs.behind }}
+
+          > [!NOTE]
+          > No action needed until upstream publishes a release tag. This PR is informational.
+          > Once upstream tags a release, the weekly sync will auto-tag and release automatically.
+
+          - [ ] Review upstream changes
+          - [ ] Close this PR if no action needed (release sync will handle the rest)
+          " \
+            --base cl/main \
+            --head "$HEAD_REF"
+
+      - name: "[B] Rebase failed — create manual-resolution PR"
+        if: steps.detect.outputs.new_release == 'false' && steps.detect.outputs.behind != '0' && steps.sync_guard.outputs.blocked != 'true' && steps.review_rebase.outputs.failed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PAT || github.token }}
+        run: |
+          BRANCH="${{ steps.review_branch.outputs.branch }}-manual"
+          HEAD_REF="${GITHUB_REPOSITORY_OWNER}:${BRANCH}"
+          ENCODED_BRANCH="${BRANCH//\//%2F}"
+          git checkout -B "$BRANCH" upstream/main
+          git push --set-upstream origin "$BRANCH"
+
+          for attempt in 1 2 3 4 5; do
+            if gh api "repos/${GITHUB_REPOSITORY}/branches/${ENCODED_BRANCH}" >/dev/null 2>&1; then
+              break
+            fi
+            echo "Waiting for GitHub to recognize branch ${BRANCH} (attempt ${attempt})"
+            sleep 3
+          done
+
+          gh pr create \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "⚠️ Manual non-release sync needed ($(date +%Y-%m-%d))" \
+            --body "## Manual resolution required
+
+          Automatic rebase of \`cl/main\` onto \`upstream/main\` failed while preparing the non-release sync PR.
+
+          **Commits ahead:** ${{ steps.detect.outputs.behind }}
+
+          ### Steps to resolve
+          1. Check out this branch locally
+          2. Rebase \`cl/main\` onto the latest upstream \`main\`
+          3. Resolve conflicts and push the updated sync branch
+          4. Merge the PR into \`cl/main\` once reviewed
+          " \
+            --base cl/main \
+            --head "$HEAD_REF"
+          echo "::warning::Non-release sync rebase failed — manual PR created: $BRANCH"

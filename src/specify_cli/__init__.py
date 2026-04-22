@@ -353,7 +353,7 @@ def show_banner():
 
 def _version_callback(value: bool):
     if value:
-        console.print(f"specify {get_speckit_version()}")
+        console.print(f"specify {get_speckit_version()}", highlight=False)
         raise typer.Exit()
 
 @app.callback()
@@ -3564,12 +3564,18 @@ def extension_remove(
     # Confirm removal
     if not force:
         console.print("\n[yellow]⚠  This will remove:[/yellow]")
-        console.print(f"   • {cmd_count} command{'s' if cmd_count != 1 else ''} per agent")
+        console.print(
+            f"   • {cmd_count} command{'s' if cmd_count != 1 else ''} per agent",
+            highlight=False,
+        )
         if skill_count:
-            console.print(f"   • {skill_count} agent skill(s)")
-        console.print(f"   • Extension directory: .specify/extensions/{extension_id}/")
+            console.print(f"   • {skill_count} agent skill(s)", highlight=False)
+        console.print(
+            f"   • Extension directory: .specify/extensions/{extension_id}/",
+            highlight=False,
+        )
         if not keep_config:
-            console.print("   • Config files (will be backed up)")
+            console.print("   • Config files (will be backed up)", highlight=False)
         console.print()
 
         confirm = typer.confirm("Continue?")

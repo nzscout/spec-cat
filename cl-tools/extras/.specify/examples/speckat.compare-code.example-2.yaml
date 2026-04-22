@@ -1,0 +1,229 @@
+# Example 2 — API Rate Limiting
+# This is the structured YAML output an LLM produces in response to speckat.compare-code.prompt.md.
+# A renderer converts it to the companion .md file.
+# This example illustrates a hybrid recommendation where Team-CL is the base with cherry-picks from Team-CP.
+
+report:
+  meta:
+    team_cl_feature_path: "specs/2026-01/api-rate-limiting"
+    team_cp_feature_path: "specs/2026-01/api-rate-limiting"
+    canonical_base_branch: "main"
+    product_docs:
+      - "docs/product/api-platform-prd.md"
+      - "docs/product/security-requirements.md"
+    generated_at: "2026-04-08T11:42:00Z"
+    reviewed_by_llm: "gemini-2.5-pro"
+
+  executive_recommendation:
+    preferred_team: "hybrid"
+    hybrid_base: "Team-CL"
+    summary: >
+      Team-CL is the recommended base. Its Redis-backed sliding window implementation
+      is the only one that satisfies the horizontal scaling requirement in the PRD and
+      the security requirement for consistent enforcement across instances. Team-CP's
+      in-memory approach cannot enforce limits when the application runs on multiple
+      nodes. Three items from Team-CP should be cherry-picked before merge: the
+      structured 429 error response body, rate limit headers on all responses, and
+      the cleaner middleware composition pattern.
+
+  comparison_matrix:
+    - criterion: "PRD Alignment"
+      team_cl: { score: "High", notes: "Redis sliding window satisfies the multi-node enforcement requirement." }
+      team_cp: { score: "Low", notes: "In-memory counter fails the PRD's multi-instance consistency requirement." }
+    - criterion: "Speckit Alignment"
+      team_cl: { score: "High", notes: "All spec scenarios implemented; tasks.md accurate." }
+      team_cp: { score: "Medium", notes: "Admin override feature missing entirely; tasks.md overstates completion." }
+    - criterion: "Correctness"
+      team_cl: { score: "High", notes: "Sliding window correctly handles burst and sustained load scenarios." }
+      team_cp: { score: "Medium", notes: "Counter resets on process restart — silent correctness failure under multi-node load (F-1)." }
+    - criterion: "Completeness"
+      team_cl: { score: "High", notes: "All acceptance criteria covered; admin override API endpoint present." }
+      team_cp: { score: "Medium", notes: "Admin override feature entirely missing (F-2)." }
+    - criterion: "Code Quality"
+      team_cl: { score: "Medium", notes: "RateLimiter class has too many responsibilities at 280 lines (F-3)." }
+      team_cp: { score: "High", notes: "Clean middleware composition; each concern isolated in its own class." }
+    - criterion: "Tests"
+      team_cl: { score: "High", notes: "Redis integration tests with mock time; 91% coverage on changed files." }
+      team_cp: { score: "High", notes: "Thorough unit tests; well-structured with good edge case coverage; 89% coverage." }
+    - criterion: "Simplicity"
+      team_cl: { score: "Medium", notes: "Redis dependency adds operational overhead." }
+      team_cp: { score: "High", notes: "Simpler code but built on the wrong backing store for the deployment model." }
+    - criterion: "Robustness"
+      team_cl: { score: "High", notes: "Redis failure falls back to allow-all mode with alerting; no silent data loss." }
+      team_cp: { score: "Low", notes: "No failure mode defined; counter inconsistency across nodes is undetected." }
+    - criterion: "Operational Readiness"
+      team_cl: { score: "High", notes: "Rate limit headers, Prometheus metrics, and on-call runbook all included." }
+      team_cp: { score: "Medium", notes: "Headers present but no metrics or runbook." }
+    - criterion: "Merge Risk"
+      team_cl: { score: "Medium", notes: "Redis dependency requires infrastructure provisioning before first deploy." }
+      team_cp: { score: "High", notes: "Incorrect multi-node behavior is an invisible production correctness risk." }
+    - criterion: "Overall Quality"
+      team_cl: { score: "High", notes: "" }
+      team_cp: { score: "Medium", notes: "" }
+
+  alignment_findings:
+    - id: "AF-1"
+      requirement: "Rate limits enforced consistently across all application instances"
+      expected: "Shared backing store ensures per-user counters are instance-independent"
+      team_cl_observation: "Redis-backed; counters shared across all nodes — matches requirement"
+      team_cp_observation: "In-process counter; each node maintains independent state — violates requirement"
+      impact: "Critical — Team-CP allows up to N×limit requests on an N-node deployment"
+    - id: "AF-2"
+      requirement: "Admins can override rate limits per API key without a deployment"
+      expected: "Admin UI with per-key limit override stored in DB, read at request time"
+      team_cl_observation: "Override API endpoint implemented; admin UI not yet present but API is complete"
+      team_cp_observation: "Neither UI nor API implemented; tasks.md marks the entire feature done"
+      impact: "Medium — Team-CL is missing UI only; Team-CP is missing the feature entirely"
+    - id: "AF-3"
+      requirement: "Rate limit headers returned on every API response"
+      expected: "X-RateLimit-Limit, X-RateLimit-Remaining, X-RateLimit-Reset on every response"
+      team_cl_observation: "Headers injected on 429 responses only — missing on non-limited responses (F-4)"
+      team_cp_observation: "Headers present on all responses with correct remaining and reset values"
+      impact: "Medium — clients cannot pre-emptively throttle without per-request headers"
+
+  team_cl:
+    tasks_md_status: "current"
+    tasks_md_notes: "tasks.md accurately reflects implementation state including the known admin UI gap which is explicitly marked as out-of-scope for this iteration."
+    pros:
+      - "Redis sliding window is the only correct solution for multi-node deployment"
+      - "Graceful Redis failure with allow-all fallback and alerting prevents silent outages"
+      - "Prometheus metrics for limit hit rate and Redis latency"
+      - "On-call runbook included covering Redis failure and limit tuning procedures"
+      - "High test coverage (91%) with mock time for deterministic sliding window scenarios"
+    cons:
+      - "RateLimiter class is 280 lines handling too many distinct concerns (F-3)"
+      - "Rate limit headers absent on non-limited responses (AF-3, F-4)"
+      - "Admin UI not implemented — override API endpoint only"
+
+  team_cp:
+    tasks_md_status: "stale"
+    tasks_md_notes: >
+      Admin override feature marked complete at tasks.md:41 but neither the API
+      endpoint nor the UI was implemented. Do not rely on this tasks.md for
+      implementation state regarding the admin override work.
+    pros:
+      - "Clean middleware composition with each concern in its own class — cherry-pick candidate"
+      - "Rate limit headers on every response with correct values — cherry-pick candidate"
+      - "Structured 429 error response body with retry_after and policy_url — cherry-pick candidate"
+      - "Thorough unit tests with well-organized edge case coverage"
+    cons:
+      - "In-memory counter fails multi-node consistency requirement — disqualifying for production"
+      - "No failure mode defined for counter inconsistency; no fallback behavior"
+      - "No Prometheus metrics or structured logging for limit events"
+      - "Admin override feature entirely missing despite tasks.md claiming completion"
+
+  findings:
+    - id: "F-1"
+      team: "Team-CP"
+      severity: "Critical"
+      category: "gap"
+      description: "In-memory rate limit counter resets on process restart and is not shared across nodes"
+      impact: "Rate limits silently unenforced in multi-node production environment; up to N×limit per user on N nodes"
+      evidence: "lib/middleware/rate_limiter.rb:12 — `@counters = {}` initialized per-process in constructor with no persistence"
+    - id: "F-2"
+      team: "Team-CP"
+      severity: "High"
+      category: "gap"
+      description: "Admin limit override feature entirely absent; tasks.md incorrectly marks it complete"
+      impact: "Operators cannot adjust limits per API key without a code deployment"
+      evidence: "specs/2026-01/api-rate-limiting/tasks.md:41 vs absence of override routes in config/routes.rb and admin controllers"
+    - id: "F-3"
+      team: "Team-CL"
+      severity: "Medium"
+      category: "anti-pattern"
+      description: "RateLimiter class handles counter logic, header injection, Redis fallback, Prometheus metrics, and key generation in a single 280-line class"
+      impact: "Testing and extending any single concern requires modifying a high-risk central class"
+      evidence: "lib/rate_limiter.rb:1-280 — six distinct concerns identified with no internal separation"
+    - id: "F-4"
+      team: "Team-CL"
+      severity: "Medium"
+      category: "gap"
+      description: "Rate limit headers only injected on 429 responses; absent on all successful responses"
+      impact: "Well-behaved clients cannot read remaining quota to self-throttle proactively"
+      evidence: "lib/rate_limiter.rb:198 — header injection inside `if rate_limited?` guard block only"
+    - id: "F-5"
+      team: "Team-CP"
+      severity: "Medium"
+      category: "gap"
+      description: "No Prometheus metrics or structured logging for rate limit events"
+      impact: "No alerting baseline; blind to limit hit rate in production from day one"
+      evidence: "lib/middleware/rate_limiter.rb — no metrics calls; no structured log statements throughout"
+
+  cherry_picks:
+    - id: "C-1"
+      from_team: "Team-CP"
+      description: "Replace Team-CL plain-string 429 response body with Team-CP's structured body including retry_after and policy_url fields"
+      rationale: "Better client developer experience; aligns with the API error response conventions used across the rest of the codebase"
+      target_files:
+        - "lib/rate_limiter.rb (error response construction block)"
+    - id: "C-2"
+      from_team: "Team-CP"
+      description: "Apply Team-CP rate limit header injection to all responses, not just 429s"
+      rationale: "Directly fixes AF-3 and F-4; Team-CP already has the correct Rack middleware placement for unconditional header injection"
+      target_files:
+        - "lib/rate_limiter.rb (header injection logic)"
+    - id: "C-3"
+      from_team: "Team-CP"
+      description: "Adopt Team-CP's middleware composition pattern to decompose RateLimiter into focused single-responsibility classes"
+      rationale: "Addresses F-3; Team-CP's separation makes each concern independently testable and extensible"
+      target_files:
+        - "lib/middleware/rate_limit_counter.rb"
+        - "lib/middleware/rate_limit_headers.rb"
+        - "lib/middleware/rate_limit_enforcer.rb"
+
+  remediation_plan:
+    - step: 1
+      description: "Cherry-pick Team-CP structured 429 error body (C-1)"
+      priority: "before-merge"
+      owner: "Team-CL"
+    - step: 2
+      description: "Cherry-pick Team-CP rate limit headers on all responses to fix AF-3 and F-4 (C-2)"
+      priority: "before-merge"
+      owner: "Team-CL"
+    - step: 3
+      description: "Provision Redis instance in staging and production environments"
+      priority: "before-merge"
+      owner: "Platform"
+    - step: 4
+      description: "Update tasks.md to accurately reflect admin UI as out-of-scope for this iteration"
+      priority: "before-merge"
+      owner: "Team-CL"
+    - step: 5
+      description: "Refactor RateLimiter using Team-CP middleware composition pattern (C-3) to address F-3"
+      priority: "after-merge"
+      owner: "Team-CL"
+    - step: 6
+      description: "Implement admin override UI — the API endpoint already exists in Team-CL"
+      priority: "after-merge"
+      owner: "Team-CL"
+
+  spec_drift:
+    - id: "SD-1"
+      file: "spec.md"
+      classification: "trivial"
+      team_cl_value: "Branch reference: feature/cl/DATA-4200-api-rate-limiting"
+      team_cp_value: "Branch reference: feature/cp/DATA-4200-api-rate-limiting"
+      description: "Branch name reference differs due to team-specific branch naming convention. No behavioral impact."
+      impact: "none"
+    - id: "SD-2"
+      file: "plan.md"
+      classification: "substantial"
+      team_cl_value: "Step 3: Redis-backed sliding window counter with configurable window size"
+      team_cp_value: "Step 3: In-memory counter with fixed 60-second window"
+      description: "Implementation approach diverged in the plan itself. Team-CL plan specifies Redis backing while Team-CP plan specifies in-memory. This is a requirements-level disagreement about the backing store, not just an implementation choice."
+      impact: "High — the plan artifacts should have been reconciled before implementation began; the backing store choice directly affects the multi-node consistency requirement"
+    - id: "SD-3"
+      file: "data-model.md"
+      classification: "substantial"
+      team_cl_value: "rate_limits table with Redis key column and TTL field"
+      team_cp_value: "rate_limits table with in-memory counter reference and no TTL field"
+      description: "Data model differs in storage mechanism and TTL handling. Team-CL includes Redis-specific fields; Team-CP omits TTL entirely."
+      impact: "Medium — data model artifacts should agree on schema; TTL omission in Team-CP means no expiry semantics are defined"
+
+  final_verdict: >
+    Team-CL is the only viable base because its Redis-backed sliding window is the only
+    implementation that satisfies the non-negotiable multi-instance consistency requirement.
+    Team-CP's cleaner code structure is the right architectural direction but is built on
+    the wrong backing store. Cherry-pick the three items before merge to get the best of
+    both implementations. Redis provisioning is the one hard infrastructure dependency
+    that must be tracked on the platform side before the first production deployment.
