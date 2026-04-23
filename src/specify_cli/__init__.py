@@ -7,6 +7,8 @@
 #     "platformdirs",
 #     "readchar",
 #     "json5",
+#     "pyyaml",
+#     "packaging",
 # ]
 # ///
 """
@@ -34,8 +36,12 @@ import json
 import json5
 import stat
 import shlex
+import urllib.error
+import urllib.request
 import yaml
 from pathlib import Path
+
+from packaging.version import InvalidVersion, Version
 from typing import Any, Optional
 
 import typer
@@ -50,6 +56,8 @@ from typer.core import TyperGroup
 
 # For cross-platform keyboard input
 import readchar
+
+GITHUB_API_LATEST = "https://api.github.com/repos/github/spec-kit/releases/latest"
 
 def _build_agent_config() -> dict[str, dict[str, Any]]:
     """Derive AGENT_CONFIG from INTEGRATION_REGISTRY."""
@@ -318,7 +326,7 @@ def select_with_arrows(options: dict, prompt_text: str = "Select an option", def
 
     return selected_key
 
-console = Console()
+console = Console(highlight=False)
 
 class BannerGroup(TyperGroup):
     """Custom group that shows banner before help."""
@@ -714,12 +722,18 @@ def _install_shared_infra(
     project_path: Path,
     script_type: str,
     tracker: StepTracker | None = None,
+    force: bool = False,
 ) -> bool:
     """Install shared infrastructure files into *project_path*.
 
     Copies ``.specify/scripts/`` and ``.specify/templates/`` from the
     bundled core_pack or source checkout.  Tracks all installed files
     in ``speckit.manifest.json``.
+
+    When *force* is ``True``, existing files are overwritten with the
+    latest bundled versions.  When ``False`` (default), only missing
+    files are added and existing ones are skipped.
+
     Returns ``True`` on success.
     """
     from .integrations.manifest import IntegrationManifest
@@ -744,12 +758,11 @@ def _install_shared_infra(
         if variant_src.is_dir():
             dest_variant = dest_scripts / variant_dir
             dest_variant.mkdir(parents=True, exist_ok=True)
-            # Merge without overwriting — only add files that don't exist yet
             for src_path in variant_src.rglob("*"):
                 if src_path.is_file():
                     rel_path = src_path.relative_to(variant_src)
                     dst_path = dest_variant / rel_path
-                    if dst_path.exists():
+                    if dst_path.exists() and not force:
                         skipped_files.append(str(dst_path.relative_to(project_path)))
                     else:
                         dst_path.parent.mkdir(parents=True, exist_ok=True)
@@ -770,7 +783,7 @@ def _install_shared_infra(
         for f in templates_src.iterdir():
             if f.is_file() and f.name != "vscode-settings.json" and not f.name.startswith("."):
                 dst = dest_templates / f.name
-                if dst.exists():
+                if dst.exists() and not force:
                     skipped_files.append(str(dst.relative_to(project_path)))
                 else:
                     shutil.copy2(f, dst)
@@ -778,10 +791,15 @@ def _install_shared_infra(
                     manifest.record_existing(rel)
 
     if skipped_files:
-        import logging
-        logging.getLogger(__name__).warning(
-            "The following shared files already exist and were not overwritten:\n%s",
-            "\n".join(f"  {f}" for f in skipped_files),
+        console.print(
+            f"[yellow]⚠[/yellow]  {len(skipped_files)} shared infrastructure file(s) already exist and were not updated:"
+        )
+        for f in skipped_files:
+            console.print(f"    {f}")
+        console.print(
+            "To refresh shared infrastructure, run "
+            "[cyan]specify init --here --force[/cyan] or "
+            "[cyan]specify integration upgrade --force[/cyan]."
         )
 
     manifest.save()
@@ -920,7 +938,6 @@ def _get_skills_dir(project_path: Path, selected_ai: str) -> Path:
 
 # Constants kept for backward compatibility with presets and extensions.
 DEFAULT_SKILLS_DIR = ".agents/skills"
-NATIVE_SKILLS_AGENTS = {"codex", "kimi"}
 SKILL_DESCRIPTIONS = {
     "specify": "Create or update feature specifications from natural language descriptions.",
     "plan": "Generate technical implementation plans from feature specifications.",
@@ -1251,6 +1268,12 @@ def init(
                 integration_parsed_options["commands_dir"] = ai_commands_dir
             if ai_skills:
                 integration_parsed_options["skills"] = True
+            # Parse --integration-options and merge into parsed_options so
+            # flags like --skills reach the integration's setup().
+            if integration_options:
+                extra = _parse_integration_options(resolved_integration, integration_options)
+                if extra:
+                    integration_parsed_options.update(extra)
 
             resolved_integration.setup(
                 project_path, manifest,
@@ -1272,7 +1295,7 @@ def init(
 
             # Install shared infrastructure (scripts, templates)
             tracker.start("shared-infra")
-            _install_shared_infra(project_path, selected_script, tracker=tracker)
+            _install_shared_infra(project_path, selected_script, tracker=tracker, force=force)
             tracker.complete("shared-infra", f"scripts ({selected_script}) + templates")
 
             ensure_constitution_from_template(project_path, tracker=tracker)
@@ -1376,8 +1399,10 @@ def init(
             }
             # Ensure ai_skills is set for SkillsIntegration so downstream
             # tools (extensions, presets) emit SKILL.md overrides correctly.
+            # Also set for integrations running in skills mode (e.g. Copilot
+            # with --skills).
             from .integrations.base import SkillsIntegration as _SkillsPersist
-            if isinstance(resolved_integration, _SkillsPersist):
+            if isinstance(resolved_integration, _SkillsPersist) or getattr(resolved_integration, "_skills_mode", False):
                 init_opts["ai_skills"] = True
             save_init_options(project_path, init_opts)
 
@@ -1489,7 +1514,7 @@ def init(
     # Determine skill display mode for the next-steps panel.
     # Skills integrations (codex, kimi, agy, trae, cursor-agent) should show skill invocation syntax.
     from .integrations.base import SkillsIntegration as _SkillsInt
-    _is_skills_integration = isinstance(resolved_integration, _SkillsInt)
+    _is_skills_integration = isinstance(resolved_integration, _SkillsInt) or getattr(resolved_integration, "_skills_mode", False)
 
     codex_skill_mode = selected_ai == "codex" and (ai_skills or _is_skills_integration)
     claude_skill_mode = selected_ai == "claude" and (ai_skills or _is_skills_integration)
@@ -1497,7 +1522,8 @@ def init(
     agy_skill_mode = selected_ai == "agy" and _is_skills_integration
     trae_skill_mode = selected_ai == "trae"
     cursor_agent_skill_mode = selected_ai == "cursor-agent" and (ai_skills or _is_skills_integration)
-    native_skill_mode = codex_skill_mode or claude_skill_mode or kimi_skill_mode or agy_skill_mode or trae_skill_mode or cursor_agent_skill_mode
+    copilot_skill_mode = selected_ai == "copilot" and _is_skills_integration
+    native_skill_mode = codex_skill_mode or claude_skill_mode or kimi_skill_mode or agy_skill_mode or trae_skill_mode or cursor_agent_skill_mode or copilot_skill_mode
 
     if codex_skill_mode and not ai_skills:
         # Integration path installed skills; show the helpful notice
@@ -1518,7 +1544,7 @@ def init(
             return f"/speckit-{name}"
         if kimi_skill_mode:
             return f"/skill:speckit-{name}"
-        if cursor_agent_skill_mode:
+        if cursor_agent_skill_mode or copilot_skill_mode:
             return f"/speckit-{name}"
         return f"/speckit.{name}"
 
@@ -1599,25 +1625,10 @@ def check():
 def version():
     """Display version and system information."""
     import platform
-    import importlib.metadata
 
     show_banner()
 
-    # Get CLI version from package metadata
-    cli_version = "unknown"
-    try:
-        cli_version = importlib.metadata.version("specify-cli")
-    except Exception:
-        # Fallback: try reading from pyproject.toml if running from source
-        try:
-            import tomllib
-            pyproject_path = Path(__file__).parent.parent.parent / "pyproject.toml"
-            if pyproject_path.exists():
-                with open(pyproject_path, "rb") as f:
-                    data = tomllib.load(f)
-                    cli_version = data.get("project", {}).get("version", "unknown")
-        except Exception:
-            pass
+    cli_version = get_speckit_version()
 
     info_table = Table(show_header=False, box=None, padding=(0, 2))
     info_table.add_column("Key", style="cyan", justify="right")
@@ -1639,6 +1650,163 @@ def version():
 
     console.print(panel)
     console.print()
+
+def _get_installed_version() -> str:
+    """Return the installed specify-cli distribution version or 'unknown'.
+
+    Uses importlib.metadata so the value reflects what was actually installed
+    by pip/uv/pipx — not a value read from pyproject.toml. This is
+    intentional for `specify self check`, which should reason about the
+    installed distribution rather than a source-tree fallback. Callers must
+    treat the sentinel string 'unknown' as an indeterminate value (see FR-020).
+    """
+
+    import importlib.metadata
+
+    metadata_errors = [importlib.metadata.PackageNotFoundError]
+    invalid_metadata_error = getattr(importlib.metadata, "InvalidMetadataError", None)
+    if invalid_metadata_error is not None:
+        metadata_errors.append(invalid_metadata_error)
+
+    try:
+        return importlib.metadata.version("specify-cli")
+    except tuple(metadata_errors):
+        return "unknown"
+
+def _normalize_tag(tag: str) -> str:
+    """Strip exactly one leading 'v' from a release tag.
+
+    Returns the rest of the string unchanged. This handles the common
+    'vX.Y.Z' tag convention in this repo; it MUST NOT strip more
+    aggressively (e.g., two leading 'v's keeps one).
+    """
+    return tag[1:] if tag.startswith("v") else tag
+
+def _is_newer(latest: str, current: str) -> bool:
+    """Return True iff `latest` is strictly greater than `current` under PEP 440.
+
+    Returns False whenever either side is 'unknown' or fails to parse; this
+    keeps the comparison indeterminate (rather than crashing or falsely
+    recommending a downgrade) on edge inputs.
+    """
+    if latest == "unknown" or current == "unknown":
+        return False
+    try:
+        return Version(latest) > Version(current)
+    except InvalidVersion:
+        return False
+
+
+def _fetch_latest_release_tag() -> tuple[str | None, str | None]:
+    """Return (tag, failure_category). Exactly one outbound call, 5 s timeout.
+
+    On success: (tag_name, None).
+    On a documented network/HTTP failure (added in T029/T030): (None, category).
+    On anything else — including a malformed response body — the exception
+    propagates; there is no catch-all (research D-006).
+    """
+    req = urllib.request.Request(
+        GITHUB_API_LATEST,
+        headers={"Accept": "application/vnd.github+json"},
+    )
+    token = None
+    for env_var in ("GH_TOKEN", "GITHUB_TOKEN"):
+        candidate = os.environ.get(env_var)
+        if candidate is not None:
+            candidate = candidate.strip()
+            if candidate:
+                token = candidate
+                break
+    if token:
+        req.add_header("Authorization", f"Bearer {token}")
+    try:
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            payload = json.loads(resp.read().decode("utf-8"))
+            tag = payload.get("tag_name")
+            if not isinstance(tag, str) or not tag:
+                raise ValueError("GitHub API response missing valid tag_name")
+            return tag, None
+    except urllib.error.HTTPError as e:
+        # Order matters: HTTPError is a subclass of URLError.
+        if e.code == 403:
+            return None, "rate limited (try setting GH_TOKEN or GITHUB_TOKEN)"
+        return None, f"HTTP {e.code}"
+    except (urllib.error.URLError, OSError):
+        return None, "offline or timeout"
+
+
+# ===== Self Commands =====
+self_app = typer.Typer(
+    name="self",
+    help="Manage the specify CLI itself (read-only check and reserved upgrade command).",
+    add_completion=False,
+)
+app.add_typer(self_app, name="self")
+
+@self_app.command("check")
+def self_check() -> None:
+    """Check whether a newer specify-cli release is available. Read-only.
+
+    This command only checks for updates; it does not modify your installation.
+    The reserved (and currently non-destructive) `specify self upgrade` command
+    is the name that a future release will use for actual self-upgrade — its
+    behavior is not implemented in this release and is intentionally out of
+    scope here. See `specify self upgrade --help` for its current status.
+    """
+
+    installed = _get_installed_version()
+    tag, failure_reason = _fetch_latest_release_tag()
+
+    if tag is None:
+        # Graceful-failure path (FR-008). `failure_reason` is one of the
+        # enumerated strings produced by _fetch_latest_release_tag() — it
+        # never contains a URL, headers, response body, or traceback.
+        assert failure_reason is not None
+        console.print(f"Installed: {installed}")
+        console.print(f"[yellow]Could not check latest release:[/yellow] {failure_reason}")
+        return
+
+    latest_normalized = _normalize_tag(tag)
+
+    if installed == "unknown":
+        # FR-020: surface the latest release and the recovery action even
+        # when the local distribution metadata is unavailable.
+        console.print("Current version could not be determined.")
+        console.print(f"Latest release: {latest_normalized}")
+        console.print("\nTo reinstall:")
+        console.print("  uv tool install specify-cli --force \\")
+        console.print(f"    --from git+https://github.com/github/spec-kit.git@{tag}")
+        return
+
+    if _is_newer(latest_normalized, installed):
+        console.print(f"[green]Update available:[/green] {installed} → {latest_normalized}")
+        console.print("\nTo upgrade:")
+        console.print("  uv tool install specify-cli --force \\")
+        console.print(f"    --from git+https://github.com/github/spec-kit.git@{tag}")
+        return
+
+    # Installed is parseable AND is >= latest → "up to date" (FR-006).
+    # Also reached when the tag is unparseable (InvalidVersion) → _is_newer
+    # returns False, and the up-to-date branch is the safer default per
+    # FR-004 / test T016.
+    console.print(f"[green]Up to date:[/green] {installed}")
+
+
+@self_app.command("upgrade")
+def self_upgrade() -> None:
+    """Reserved command surface for self-upgrade; not implemented in this release.
+
+    This command is a documented non-destructive stub in this release: it
+    performs no outbound network request, no install-method detection, and
+    invokes no installer. It prints a three-line guidance message and exits 0.
+    Actual self-upgrade is planned as follow-up work.
+
+    Use `specify self check` today to see whether a newer release is available
+    and to get a copy-pasteable reinstall command.
+    """
+    console.print("specify self upgrade is not implemented yet.")
+    console.print("Run 'specify self check' to see whether a newer release is available.")
+    console.print("Actual self-upgrade is planned as follow-up work.")
 
 
 # ===== Extension Commands =====
@@ -2007,7 +2175,7 @@ def _update_init_options_for_integration(
     opts["context_file"] = integration.context_file
     if script_type:
         opts["script"] = script_type
-    if isinstance(integration, SkillsIntegration):
+    if isinstance(integration, SkillsIntegration) or getattr(integration, "_skills_mode", False):
         opts["ai_skills"] = True
     else:
         opts.pop("ai_skills", None)
@@ -2297,9 +2465,8 @@ def integration_upgrade(
 
     selected_script = _resolve_script_type(project_root, script)
 
-    # Ensure shared infrastructure is present (safe to run unconditionally;
-    # _install_shared_infra merges missing files without overwriting).
-    _install_shared_infra(project_root, selected_script)
+    # Ensure shared infrastructure is up to date; --force overwrites existing files.
+    _install_shared_infra(project_root, selected_script, force=force)
     if os.name != "nt":
         ensure_executable_scripts(project_root)
 
@@ -2595,14 +2762,58 @@ def preset_resolve(
         raise typer.Exit(1)
 
     resolver = PresetResolver(project_root)
-    result = resolver.resolve_with_source(template_name)
+    layers = resolver.collect_all_layers(template_name)
 
-    if result:
-        console.print(f"  [bold]{template_name}[/bold]: {result['path']}")
-        console.print(f"    [dim](from: {result['source']})[/dim]")
+    if layers:
+        # Use the highest-priority layer for display because the final output
+        # may be composed and may not map to resolve_with_source()'s single path.
+        display_layer = layers[0]
+        console.print(f"  [bold]{template_name}[/bold]: {display_layer['path']}")
+        console.print(f"    [dim](top layer from: {display_layer['source']})[/dim]")
+
+        has_composition = (
+            layers[0]["strategy"] != "replace"
+            and any(layer["strategy"] != "replace" for layer in layers)
+        )
+        if has_composition:
+            # Verify composition is actually possible
+            try:
+                composed = resolver.resolve_content(template_name)
+            except Exception as exc:
+                composed = None
+                console.print(f"    [yellow]Warning: composition error: {exc}[/yellow]")
+            if composed is None:
+                console.print("    [yellow]Warning: composition cannot produce output (no base layer with 'replace' strategy)[/yellow]")
+            else:
+                console.print("    [dim]Final output is composed from multiple preset layers; the path above is the highest-priority contributing layer.[/dim]")
+            console.print("\n  [bold]Composition chain:[/bold]")
+            # Compute the effective base: first replace layer scanning from
+            # highest priority (matching resolve_content top-down logic).
+            # Only show layers from the base upward (lower layers are ignored).
+            effective_base_idx = None
+            for idx, lyr in enumerate(layers):
+                if lyr["strategy"] == "replace":
+                    effective_base_idx = idx
+                    break
+            # Show only contributing layers (base and above)
+            if effective_base_idx is not None:
+                contributing = layers[:effective_base_idx + 1]
+            else:
+                contributing = layers
+            for i, layer in enumerate(reversed(contributing)):
+                strategy_label = layer["strategy"]
+                if strategy_label == "replace" and i == 0:
+                    strategy_label = "base"
+                console.print(f"    {i + 1}. [{strategy_label}] {layer['source']} → {layer['path']}")
     else:
-        console.print(f"  [yellow]{template_name}[/yellow]: not found")
-        console.print("    [dim]No template with this name exists in the resolution stack[/dim]")
+        # No layers found — fall back to resolve_with_source for non-composition cases
+        result = resolver.resolve_with_source(template_name)
+        if result:
+            console.print(f"  [bold]{template_name}[/bold]: {result['path']}")
+            console.print(f"    [dim](from: {result['source']})[/dim]")
+        else:
+            console.print(f"  [yellow]{template_name}[/yellow]: not found")
+            console.print("    [dim]No template with this name exists in the resolution stack[/dim]")
 
 
 @preset_app.command("info")
