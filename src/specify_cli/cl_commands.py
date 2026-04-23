@@ -46,13 +46,17 @@ def _find_cl_root() -> Path:
     if source_root.is_dir():
         return source_root
 
-    raise RuntimeError(
-        "CL tools directory not found.\n"
-        "Expected 'specify_cli/cl_pack/' (wheel install) or 'cl-tools/' "
+    raise FileNotFoundError(
+        "Could not locate bundled CL tools (cl_pack in wheel) or cl-tools/ "
         "(fork source checkout).\n"
         "Re-install specify-cli from the CL fork: "
         "uv tool install specify-cli --force --from git+https://github.com/your-org/spec-kit.git"
     )
+
+
+def _common_ps1_has_gitflow_pattern(text: str) -> bool:
+    """Return True when common.ps1 includes the CL Git Flow branch check."""
+    return "(?:feature|feat)/" in text or "feature/<feature-name>" in text
 
 
 def _apply_patches(project_root: Path, dry_run: bool) -> int:
@@ -170,7 +174,7 @@ def verify(
         ))
         checks.append((
             "common.ps1 — feature/ branch pattern in Test-FeatureBranch",
-            "^feature/" in text,
+            _common_ps1_has_gitflow_pattern(text),
             str(common_ps1),
         ))
         checks.append((
