@@ -56,51 +56,52 @@ class ClaudeIntegration(SkillsIntegration):
 
     @staticmethod
     def inject_argument_hint(content: str, hint: str) -> str:
-        """Insert ``argument-hint`` after the first ``description:`` in YAML frontmatter.
+        """Insert ``argument-hint`` after ``description`` in YAML frontmatter.
 
         Skips injection if ``argument-hint:`` already exists in the
         frontmatter to avoid duplicate keys.
         """
-        lines = content.splitlines(keepends=True)
+        match = re.match(
+            r"^(---\s*\r?\n)(.*?)(\r?\n---\s*)(\r?\n|$)(.*)$",
+            content,
+            re.DOTALL,
+        )
+        if not match:
+            return content
 
-        # Pre-scan: bail out if argument-hint already present in frontmatter
-        dash_count = 0
-        for line in lines:
-            stripped = line.rstrip("\n\r")
-            if stripped == "---":
-                dash_count += 1
-                if dash_count == 2:
-                    break
-                continue
-            if dash_count == 1 and stripped.startswith("argument-hint:"):
-                return content  # already present
+        opening, frontmatter_text, closing, separator, rest = match.groups()
+        try:
+            frontmatter = yaml.safe_load(frontmatter_text) or {}
+        except yaml.YAMLError:
+            return content
 
-        out: list[str] = []
-        in_fm = False
-        dash_count = 0
-        injected = False
-        for line in lines:
-            stripped = line.rstrip("\n\r")
-            if stripped == "---":
-                dash_count += 1
-                in_fm = dash_count == 1
-                out.append(line)
-                continue
-            if in_fm and not injected and stripped.startswith("description:"):
-                out.append(line)
-                # Preserve the exact line-ending style (\r\n vs \n)
-                if line.endswith("\r\n"):
-                    eol = "\r\n"
-                elif line.endswith("\n"):
-                    eol = "\n"
-                else:
-                    eol = ""
-                escaped = hint.replace("\\", "\\\\").replace('"', '\\"')
-                out.append(f'argument-hint: "{escaped}"{eol}')
-                injected = True
-                continue
-            out.append(line)
-        return "".join(out)
+        if not isinstance(frontmatter, dict) or "argument-hint" in frontmatter:
+            return content
+
+        updated_frontmatter: dict[str, Any] = {}
+        inserted = False
+        for key, value in frontmatter.items():
+            updated_frontmatter[key] = value
+            if key == "description":
+                updated_frontmatter["argument-hint"] = hint
+                inserted = True
+
+        if not inserted:
+            updated_frontmatter["argument-hint"] = hint
+
+        rendered_frontmatter = yaml.safe_dump(
+            updated_frontmatter,
+            sort_keys=False,
+            width=4096,
+            allow_unicode=True,
+        ).strip()
+        escaped_hint = hint.replace("\\", "\\\\").replace('"', '\\"')
+        rendered_frontmatter = re.sub(
+            r"(?m)^argument-hint:.*$",
+            f'argument-hint: "{escaped_hint}"',
+            rendered_frontmatter,
+        )
+        return f"{opening}{rendered_frontmatter}{closing}{separator}{rest}"
 
     def _render_skill(self, template_name: str, frontmatter: dict[str, Any], body: str) -> str:
         """Render a processed command template as a Claude skill."""

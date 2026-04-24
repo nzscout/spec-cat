@@ -91,6 +91,9 @@ Runs three phases in sequence:
 # Full bootstrap (recommended)
 speckit init
 
+# Bootstrap for Claude Code instead of Copilot
+speckit init --ai claude
+
 # Preview without writing any files
 speckit init --dry-run
 
@@ -126,6 +129,21 @@ After `speckit init` in a new directory (in addition to everything `specify init
 The `speckit.specify` agent also gets two extra workflow steps injected:
 - **Step 1 inject** — short-name generation guidance
 - **Step 2 inject** — feature branch creation with `speckit` context
+
+When using `speckit init --ai claude`, the CL prompt extras are also generated as Claude skills under `.claude/skills/`, for example:
+
+```
+.claude/
+  skills/
+    speckat-bootstrap-worktrees/
+      SKILL.md
+    speckat-compare-code/
+      SKILL.md
+    speckat-compare-specs/
+      SKILL.md
+    speckat-git-commit/
+      SKILL.md
+```
 
 ### `specify init` — upstream command (unchanged)
 

@@ -1,8 +1,8 @@
 """CL-specific speckit wrapper commands.
 
 Provides the ``speckit`` CLI with a single ``speckit init`` command that runs
-``specify init --here --force --ai copilot`` and then applies CL patches and
-copies extras — all in one step.
+``specify init --here --force --ai <assistant>`` and then applies CL patches and
+copies CL extras — all in one step.
 
 Design notes:
 - This file is new; it never modifies ``__init__.py`` or any upstream file, so
@@ -59,16 +59,142 @@ def _common_ps1_has_gitflow_pattern(text: str) -> bool:
     return "(?:feature|feat)/" in text or "feature/<feature-name>" in text
 
 
-def _apply_patches(project_root: Path, dry_run: bool) -> int:
+def _cl_extras_root() -> Path:
+    return _find_cl_root() / "extras"
+
+
+def _iter_cl_prompt_extras() -> list[Path]:
+    prompts_dir = _cl_extras_root() / ".github" / "prompts"
+    if not prompts_dir.is_dir():
+        return []
+    return sorted(path for path in prompts_dir.iterdir() if path.is_file() and path.name.endswith(".prompt.md"))
+
+
+def _claude_extra_skill_name(prompt_path: Path) -> str:
+    prompt_name = prompt_path.name.removesuffix(".prompt.md")
+    return prompt_name.replace(".", "-")
+
+
+def _should_install_claude_extras(project_root: Path) -> bool:
+    from specify_cli import load_init_options
+
+    init_options = load_init_options(project_root)
+    selected_ai = init_options.get("ai") if isinstance(init_options, dict) else None
+    return selected_ai == "claude" or (project_root / ".claude" / "skills").exists()
+
+
+def _render_claude_extra_skill(prompt_path: Path) -> str:
+    from specify_cli.agents import CommandRegistrar
+    from specify_cli.integrations.claude import ClaudeIntegration
+
+    registrar = CommandRegistrar()
+    prompt_text = prompt_path.read_text(encoding="utf-8")
+    prompt_frontmatter, prompt_body = registrar.parse_frontmatter(prompt_text)
+
+    sections: list[str] = []
+    agent_name = prompt_frontmatter.get("agent") if isinstance(prompt_frontmatter, dict) else None
+    if isinstance(agent_name, str) and agent_name and agent_name != "agent":
+        agent_path = _cl_extras_root() / ".github" / "agents" / f"{agent_name}.agent.md"
+        if agent_path.exists():
+            agent_text = agent_path.read_text(encoding="utf-8")
+            _, agent_body = registrar.parse_frontmatter(agent_text)
+            if agent_body.strip():
+                sections.append(agent_body.strip())
+
+    if prompt_body.strip():
+        sections.append(prompt_body.strip())
+
+    skill_name = _claude_extra_skill_name(prompt_path)
+    description = ""
+    if isinstance(prompt_frontmatter, dict):
+        description = str(prompt_frontmatter.get("description") or "").strip()
+    if not description:
+        description = f"CL extra prompt: {skill_name}"
+
+    skill_frontmatter = registrar.build_skill_frontmatter(
+        "claude",
+        skill_name,
+        description,
+        f"cl-tools/extras/.github/prompts/{prompt_path.name}",
+    )
+    skill_content = registrar.render_frontmatter(skill_frontmatter) + "\n" + "\n\n".join(sections).strip() + "\n"
+
+    integration = ClaudeIntegration()
+    skill_content = integration.post_process_skill_content(skill_content)
+
+    argument_hint = prompt_frontmatter.get("argument-hint") if isinstance(prompt_frontmatter, dict) else None
+    if isinstance(argument_hint, str) and argument_hint.strip():
+        skill_content = integration.inject_argument_hint(skill_content, argument_hint.strip())
+
+    return skill_content
+
+
+def _install_claude_extras(project_root: Path, dry_run: bool) -> tuple[int, int]:
+    if not _should_install_claude_extras(project_root):
+        return 0, 0
+
+    skills_dir = project_root / ".claude" / "skills"
+    created = updated = 0
+
+    for prompt_path in _iter_cl_prompt_extras():
+        skill_name = _claude_extra_skill_name(prompt_path)
+        skill_file = skills_dir / skill_name / "SKILL.md"
+        is_update = skill_file.exists()
+
+        if dry_run:
+            label = "[DRY-U]" if is_update else "[DRY]  "
+            console.print(f"  [cyan]{label} .claude/skills/{skill_name}/SKILL.md (would {'overwrite' if is_update else 'create'})[/cyan]")
+        else:
+            skill_file.parent.mkdir(parents=True, exist_ok=True)
+            skill_file.write_text(_render_claude_extra_skill(prompt_path), encoding="utf-8")
+            label = "[UP]  " if is_update else "[OK]  "
+            console.print(f"  [green]{label} .claude/skills/{skill_name}/SKILL.md[/green]")
+
+        if is_update:
+            updated += 1
+        else:
+            created += 1
+
+    return created, updated
+
+
+def _has_required_script_patches(project_root: Path) -> bool:
+    common_ps1 = project_root / ".specify" / "scripts" / "powershell" / "common.ps1"
+    create_ps1 = project_root / ".specify" / "scripts" / "powershell" / "create-new-feature.ps1"
+
+    if not common_ps1.exists() or not create_ps1.exists():
+        return False
+
+    common_text = common_ps1.read_text(encoding="utf-8")
+    create_text = create_ps1.read_text(encoding="utf-8")
+    return all((
+        "function Get-FeatureName" in common_text,
+        _common_ps1_has_gitflow_pattern(common_text),
+        "Get-FeatureName -Branch" in common_text,
+        "[switch]$GitFlow" in create_text,
+        '"feature/$ShortName"' in create_text,
+    ))
+
+
+def _apply_patches(project_root: Path, dry_run: bool, ai: str) -> int:
     patch_script = _find_cl_root() / "patches" / "apply.ps1"
     cmd = ["pwsh", "-File", str(patch_script), "-ProjectRoot", str(project_root)]
     if dry_run:
         cmd.append("-WhatIf")
-    return subprocess.run(cmd, cwd=str(project_root)).returncode
+    rc = subprocess.run(cmd, cwd=str(project_root)).returncode
+    if rc == 0 or dry_run or ai == "copilot":
+        return rc
+
+    specify_agent = project_root / ".github" / "agents" / "speckit.specify.agent.md"
+    if not specify_agent.exists() and _has_required_script_patches(project_root):
+        console.print("[yellow]Patch phase skipped Copilot-only agent patches for non-Copilot init.[/yellow]")
+        return 0
+
+    return rc
 
 
 def _copy_extras(project_root: Path, dry_run: bool) -> tuple[int, int, int]:
-    extras_root = _find_cl_root() / "extras"
+    extras_root = _cl_extras_root()
 
     copied = skipped = 0
     for src in sorted(extras_root.rglob("*")):
@@ -91,6 +217,10 @@ def _copy_extras(project_root: Path, dry_run: bool) -> tuple[int, int, int]:
         else:
             copied += 1
 
+    claude_created, claude_updated = _install_claude_extras(project_root, dry_run=dry_run)
+    copied += claude_created
+    skipped += claude_updated
+
     return copied, skipped, 0
 
 
@@ -103,6 +233,7 @@ def init(
     project_root: str  = typer.Option(".", "--root", "-r", help="Project root (defaults to CWD)"),
     dry_run: bool      = typer.Option(False, "--dry-run", "-n", help="Preview without writing files"),
     skip_extras: bool  = typer.Option(False, "--skip-extras", help="Skip extras copy (use on re-inits)"),
+    ai: str            = typer.Option("copilot", "--ai", help="AI assistant for specify init (copilot or claude)"),
 ) -> None:
     """Run specify init then apply CL patches and extras in one step."""
     root = Path(project_root).resolve()
@@ -111,8 +242,8 @@ def init(
 
     # Phase 1 — specify init
     console.print()
-    console.print("[bold]Phase 1 — specify init --here --force --ai copilot[/bold]")
-    specify_cmd = ["specify", "init", "--here", "--force", "--ai", "copilot"]
+    console.print(f"[bold]Phase 1 — specify init --here --force --ai {ai}[/bold]")
+    specify_cmd = ["specify", "init", "--here", "--force", "--ai", ai]
     if dry_run:
         console.print(f"  [dim][DRY] would run: {' '.join(specify_cmd)}[/dim]")
     else:
@@ -124,7 +255,7 @@ def init(
     # Phase 2 — patches
     console.print()
     console.print("[bold]Phase 2 — patches[/bold]")
-    rc = _apply_patches(root, dry_run=dry_run)
+    rc = _apply_patches(root, dry_run=dry_run, ai=ai)
     if rc != 0:
         console.print("[red]Patch phase failed — see warnings above.[/red]")
         raise typer.Exit(rc)
@@ -212,13 +343,25 @@ def verify(
             checks.append((label, False, f"File not found: {create_ps1}"))
 
     # --- extra files (derived dynamically from the extras/ folder) ----------
-    extras_root = _find_cl_root() / "extras"
+    extras_root = _cl_extras_root()
     for src in sorted(extras_root.rglob("*")):
         if src.is_dir():
             continue
         rel = src.relative_to(extras_root)
         path = root / rel
         checks.append((f"Extra present: {rel}", path.exists(), str(path)))
+
+    # --- Claude skill extras (when Claude skills are present) ----------------
+    claude_skills_dir = root / ".claude" / "skills"
+    if claude_skills_dir.exists():
+        for prompt_path in _iter_cl_prompt_extras():
+            skill_name = _claude_extra_skill_name(prompt_path)
+            skill_path = claude_skills_dir / skill_name / "SKILL.md"
+            checks.append((
+                f"Claude extra present: .claude/skills/{skill_name}/SKILL.md",
+                skill_path.exists(),
+                str(skill_path),
+            ))
 
     # --- Print results -------------------------------------------------------
     passed = 0

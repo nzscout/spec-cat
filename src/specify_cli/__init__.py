@@ -59,6 +59,30 @@ import readchar
 
 GITHUB_API_LATEST = "https://api.github.com/repos/github/spec-kit/releases/latest"
 
+
+def _enable_windows_console_fallback() -> None:
+    """Prevent Rich output from crashing on legacy Windows code pages."""
+    if os.name != "nt":
+        return
+
+    for stream_name in ("stdout", "stderr"):
+        stream = getattr(sys, stream_name, None)
+        encoding = getattr(stream, "encoding", None)
+        if stream is None or not hasattr(stream, "reconfigure") or not encoding:
+            continue
+
+        normalized = encoding.lower().replace("-", "")
+        if normalized in {"utf8", "utf8sig"}:
+            continue
+
+        try:
+            stream.reconfigure(errors="replace")
+        except (AttributeError, ValueError):
+            continue
+
+
+_enable_windows_console_fallback()
+
 def _build_agent_config() -> dict[str, dict[str, Any]]:
     """Derive AGENT_CONFIG from INTEGRATION_REGISTRY."""
     from .integrations import INTEGRATION_REGISTRY
@@ -355,8 +379,13 @@ def show_banner():
         color = colors[i % len(colors)]
         styled_banner.append(line + "\n", style=color)
 
-    console.print(Align.center(styled_banner))
-    console.print(Align.center(Text(TAGLINE, style="italic bright_yellow")))
+    try:
+        console.print(Align.center(styled_banner))
+        console.print(Align.center(Text(TAGLINE, style="italic bright_yellow")))
+    except UnicodeEncodeError:
+        fallback_banner = Text("SPECIFY", style="bold")
+        console.print(Align.center(fallback_banner))
+        console.print(Align.center(Text(TAGLINE, style="bold")))
     console.print()
 
 def _version_callback(value: bool):
