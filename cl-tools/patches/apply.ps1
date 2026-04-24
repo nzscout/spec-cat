@@ -128,8 +128,9 @@ $createFeatureScript = Join-Path $ProjectRoot ".specify/scripts/powershell/creat
 $patches = @(
     @{
         FilePath    = $specifyAgent
-        # Upstream heading: "1. **Generate a concise short name** (2-4 words) for the branch:"
-        StartAnchor = '^1\. \*\*Generate a concise short name\*\*'
+        # Accept both the upstream heading and the already-patched heading so
+        # re-running speckit init remains idempotent on existing projects.
+        StartAnchor = '^1\. \*\*(Generate a concise short name|Determine the feature short name)\*\*'
         # Next section heading starts with "2. **"
         EndAnchor   = '^2\. \*\*'
         SnippetPath = Join-Path $ScriptDir 'snippets/specify-step1.md'

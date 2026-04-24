@@ -167,6 +167,21 @@ class TestPatchAnchors:
             f"Unexpected [WARN] in anchor check output:\n{result.stdout}"
         )
 
+    def test_all_anchors_resolve_on_reapply(self, patched_project: Path):
+        """apply.ps1 -WhatIf must stay clean after the project is already patched."""
+        result = subprocess.run(
+            ["pwsh", "-File", str(APPLY_PS1), "-ProjectRoot", str(patched_project), "-WhatIf"],
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode == 0, (
+            "One or more patch anchors were not reusable on an already-patched project.\n"
+            f"Output:\n{result.stdout}\n{result.stderr}"
+        )
+        assert "[WARN]" not in result.stdout, (
+            f"Unexpected [WARN] in reapply anchor check output:\n{result.stdout}"
+        )
+
 
 # ---------------------------------------------------------------------------
 # Option 1 — Test-FeatureBranch (patched common.ps1)
