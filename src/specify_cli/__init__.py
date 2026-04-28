@@ -155,6 +155,17 @@ def _build_ai_deprecation_warning(
         f"Use [bold]{replacement}[/bold] instead."
     )
 
+
+def _build_no_git_deprecation_warning() -> str:
+    """Build the ``--no-git`` deprecation warning message."""
+
+    return (
+        "[bold]--no-git[/bold] is deprecated and will be removed in version 0.10.0 or later.\n\n"
+        "The git extension will no longer be enabled by default when using "
+        "[bold]--no-git[/bold].\n"
+        "Use [bold]specify extension disable git[/bold] after init if you want to remove git workflow helpers from a project."
+    )
+
 SCRIPT_TYPE_CHOICES = {"sh": "POSIX Shell (bash/zsh)", "ps": "PowerShell"}
 
 CLAUDE_LOCAL_PATH = Path.home() / ".claude" / "local" / "claude"
@@ -752,7 +763,9 @@ def _install_shared_infra(
     script_type: str,
     tracker: StepTracker | None = None,
     force: bool = False,
-    invoke_separator: str = ".",
+    invoke_separator: str | None = None,
+    integration: Any | None = None,
+    parsed_options: dict[str, Any] | None = None,
 ) -> bool:
     """Install shared infrastructure files into *project_path*.
 
@@ -760,21 +773,32 @@ def _install_shared_infra(
     bundled core_pack or source checkout.  Tracks all installed files
     in ``speckit.manifest.json``.
 
-    Page templates are processed to resolve ``__SPECKIT_COMMAND_<NAME>__``
-    placeholders using *invoke_separator* (``"."`` for markdown agents,
-    ``"-"`` for skills agents).
-
     When *force* is ``True``, existing files are overwritten with the
     latest bundled versions.  When ``False`` (default), only missing
     files are added and existing ones are skipped.
 
     Returns ``True`` on success.
     """
+    from .integrations import get_integration
     from .integrations.base import IntegrationBase
     from .integrations.manifest import IntegrationManifest
 
     core = _locate_core_pack()
     manifest = IntegrationManifest("speckit", project_path, version=get_speckit_version())
+
+    resolved_separator = invoke_separator
+    if resolved_separator is None and integration is not None:
+        resolved_separator = integration.effective_invoke_separator(parsed_options)
+    if resolved_separator is None:
+        init_opts = load_init_options(project_path)
+        integration_key = init_opts.get("integration") or init_opts.get("ai")
+        if isinstance(integration_key, str):
+            active_integration = get_integration(integration_key)
+            if active_integration is not None:
+                inferred_options = {"skills": True} if init_opts.get("ai_skills") else None
+                resolved_separator = active_integration.effective_invoke_separator(inferred_options)
+    if resolved_separator is None:
+        resolved_separator = "."
 
     # Scripts
     if core and (core / "scripts").is_dir():
@@ -821,11 +845,12 @@ def _install_shared_infra(
                 if dst.exists() and not force:
                     skipped_files.append(str(dst.relative_to(project_path)))
                 else:
-                    content = f.read_text(encoding="utf-8")
-                    content = IntegrationBase.resolve_command_refs(
-                        content, invoke_separator
+                    template_content = f.read_text(encoding="utf-8")
+                    template_content = IntegrationBase.resolve_command_refs(
+                        template_content,
+                        resolved_separator,
                     )
-                    dst.write_text(content, encoding="utf-8")
+                    dst.write_text(template_content, encoding="utf-8")
                     rel = dst.relative_to(project_path).as_posix()
                     manifest.record_existing(rel)
 
@@ -835,11 +860,9 @@ def _install_shared_infra(
         )
         for f in skipped_files:
             console.print(f"    {f}")
-        console.print(
-            "To refresh shared infrastructure, run "
-            "[cyan]specify init --here --force[/cyan] or "
-            "[cyan]specify integration upgrade --force[/cyan]."
-        )
+        console.print("To refresh shared infrastructure, run one of:")
+        console.print("  [cyan]specify init --here --force[/cyan]")
+        console.print("  [cyan]specify integration upgrade --force[/cyan]")
 
     manifest.save()
     return True
@@ -996,7 +1019,7 @@ def init(
     ai_assistant: str = typer.Option(None, "--ai", help=AI_ASSISTANT_HELP),
     ai_commands_dir: str = typer.Option(None, "--ai-commands-dir", help="Directory for agent command files (required with --ai generic, e.g. .myagent/commands/)"),
     script_type: str = typer.Option(None, "--script", help="Script type to use: sh or ps"),
-    ignore_agent_tools: bool = typer.Option(False, "--ignore-agent-tools", help="Skip checks for coding agent tools like Claude Code"),
+    ignore_agent_tools: bool = typer.Option(False, "--ignore-agent-tools", help="Skip checks for AI agent tools like Claude Code"),
     no_git: bool = typer.Option(False, "--no-git", help="Skip git repository initialization"),
     here: bool = typer.Option(False, "--here", help="Initialize project in the current directory instead of creating a new one"),
     force: bool = typer.Option(False, "--force", help="Force merge/overwrite when using --here (skip confirmation)"),
@@ -1026,45 +1049,47 @@ def init(
 
     This command will:
     1. Check that required tools are installed (git is optional)
-    2. Let you choose your coding agent integration
+    2. Let you choose your AI assistant
     3. Download template from GitHub (or use bundled assets with --offline)
     4. Initialize a fresh git repository (if not --no-git and no existing repo)
-    5. Optionally set up coding agent integration commands
+    5. Optionally set up AI assistant commands
 
     Examples:
         specify init my-project
-        specify init my-project --integration claude
-        specify init my-project --integration copilot --no-git
+        specify init my-project --ai claude
+        specify init my-project --ai copilot --no-git
         specify init --ignore-agent-tools my-project
-        specify init . --integration claude         # Initialize in current directory
-        specify init .                     # Initialize in current directory (interactive integration selection)
-        specify init --here --integration claude    # Alternative syntax for current directory
-        specify init --here --integration codex --integration-options="--skills"
-        specify init --here --integration codebuddy
-        specify init --here --integration vibe      # Initialize with Mistral Vibe support
+        specify init . --ai claude         # Initialize in current directory
+        specify init .                     # Initialize in current directory (interactive AI selection)
+        specify init --here --ai claude    # Alternative syntax for current directory
+        specify init --here --ai codex --ai-skills
+        specify init --here --ai codebuddy
+        specify init --here --ai vibe      # Initialize with Mistral Vibe support
         specify init --here
         specify init --here --force  # Skip confirmation when current directory not empty
-        specify init my-project --integration claude   # Claude installs skills by default
-        specify init --here --integration gemini
-        specify init my-project --integration generic --integration-options="--commands-dir .myagent/commands/"  # Bring your own agent; requires --commands-dir
-        specify init my-project --integration claude --preset healthcare-compliance  # With preset
+        specify init my-project --ai claude   # Claude installs skills by default
+        specify init --here --ai gemini --ai-skills
+        specify init my-project --ai generic --ai-commands-dir .myagent/commands/  # Unsupported agent
+        specify init my-project --offline  # Use bundled assets (no network access)
+        specify init my-project --ai claude --preset healthcare-compliance  # With preset
     """
 
     show_banner()
     ai_deprecation_warning: str | None = None
+    no_git_deprecation_warning: str | None = None
 
     # Detect when option values are likely misinterpreted flags (parameter ordering issue)
     if ai_assistant and ai_assistant.startswith("--"):
         console.print(f"[red]Error:[/red] Invalid value for --ai: '{ai_assistant}'")
         console.print("[yellow]Hint:[/yellow] Did you forget to provide a value for --ai?")
-        console.print("[yellow]Example:[/yellow] specify init --integration claude --here")
+        console.print("[yellow]Example:[/yellow] specify init --ai claude --here")
         console.print(f"[yellow]Available agents:[/yellow] {', '.join(AGENT_CONFIG.keys())}")
         raise typer.Exit(1)
 
     if ai_commands_dir and ai_commands_dir.startswith("--"):
         console.print(f"[red]Error:[/red] Invalid value for --ai-commands-dir: '{ai_commands_dir}'")
         console.print("[yellow]Hint:[/yellow] Did you forget to provide a value for --ai-commands-dir?")
-        console.print("[yellow]Example:[/yellow] specify init --integration generic --integration-options=\"--commands-dir .myagent/commands/\"")
+        console.print("[yellow]Example:[/yellow] specify init --ai generic --ai-commands-dir .myagent/commands/")
         raise typer.Exit(1)
 
     if ai_assistant:
@@ -1095,6 +1120,9 @@ def init(
             ai_commands_dir=ai_commands_dir,
         )
 
+    if no_git:
+        no_git_deprecation_warning = _build_no_git_deprecation_warning()
+
     # Deprecation warnings for --ai-skills and --ai-commands-dir (only when
     # an integration has been resolved from --ai or --integration)
     if ai_assistant or integration:
@@ -1115,13 +1143,6 @@ def init(
                 "[dim]Note: --ai-commands-dir is deprecated; "
                 'use [bold]--integration generic --integration-options="--commands-dir <dir>"[/bold] instead.[/dim]'
             )
-
-    if no_git:
-        console.print(
-            "[yellow]⚠️  --no-git is deprecated and will be removed in v0.10.0.[/yellow]\n"
-            "[yellow]The git extension will no longer be enabled by default "
-            "— use the [bold]specify extension[/bold] commands to install or enable the git extension if needed.[/yellow]"
-        )
 
     if project_name == ".":
         here = True
@@ -1198,7 +1219,7 @@ def init(
         ai_choices = {key: config["name"] for key, config in AGENT_CONFIG.items()}
         selected_ai = select_with_arrows(
             ai_choices,
-            "Choose your coding agent integration:",
+            "Choose your AI assistant:",
             "copilot"
         )
 
@@ -1269,7 +1290,7 @@ def init(
         else:
             selected_script = default_script
 
-    console.print(f"[cyan]Selected coding agent integration:[/cyan] {selected_ai}")
+    console.print(f"[cyan]Selected AI assistant:[/cyan] {selected_ai}")
     console.print(f"[cyan]Selected script type:[/cyan] {selected_script}")
 
     tracker = StepTracker("Initialize Specify Project")
@@ -1278,7 +1299,7 @@ def init(
 
     tracker.add("precheck", "Check required tools")
     tracker.complete("precheck", "ok")
-    tracker.add("ai-select", "Select coding agent integration")
+    tracker.add("ai-select", "Select AI assistant")
     tracker.complete("ai-select", f"{selected_ai}")
     tracker.add("script-select", "Select script type")
     tracker.complete("script-select", selected_script)
@@ -1340,7 +1361,14 @@ def init(
 
             # Install shared infrastructure (scripts, templates)
             tracker.start("shared-infra")
-            _install_shared_infra(project_path, selected_script, tracker=tracker, force=force, invoke_separator=resolved_integration.effective_invoke_separator(integration_parsed_options))
+            _install_shared_infra(
+                project_path,
+                selected_script,
+                tracker=tracker,
+                force=force,
+                integration=resolved_integration,
+                parsed_options=integration_parsed_options or None,
+            )
             tracker.complete("shared-infra", f"scripts ({selected_script}) + templates")
 
             ensure_constitution_from_template(project_path, tracker=tracker)
@@ -1548,6 +1576,16 @@ def init(
         console.print()
         console.print(deprecation_notice)
 
+    if no_git_deprecation_warning:
+        deprecation_notice = Panel(
+            no_git_deprecation_warning,
+            title="[bold red]Deprecation Warning[/bold red]",
+            border_style="red",
+            padding=(1, 2),
+        )
+        console.print()
+        console.print(deprecation_notice)
+
     steps_lines = []
     if not here:
         steps_lines.append(f"1. Go to the project folder: [cyan]cd {project_name}[/cyan]")
@@ -1593,7 +1631,7 @@ def init(
             return f"/speckit-{name}"
         return f"/speckit.{name}"
 
-    steps_lines.append(f"{step_num}. Start using {usage_label} with your coding agent:")
+    steps_lines.append(f"{step_num}. Start using {usage_label} with your AI agent:")
 
     steps_lines.append(f"   {step_num}.1 [cyan]{_display_cmd('constitution')}[/] - Establish project principles")
     steps_lines.append(f"   {step_num}.2 [cyan]{_display_cmd('specify')}[/] - Create baseline specification")
@@ -1664,7 +1702,7 @@ def check():
         console.print("[dim]Tip: Install git for repository management[/dim]")
 
     if not any(agent_results.values()):
-        console.print("[dim]Tip: Install a coding agent for the best experience[/dim]")
+        console.print("[dim]Tip: Install an AI assistant for the best experience[/dim]")
 
 @app.command()
 def version():
@@ -1910,7 +1948,7 @@ def get_speckit_version() -> str:
 
 integration_app = typer.Typer(
     name="integration",
-    help="Manage coding agent integrations",
+    help="Manage AI agent integrations",
     add_completion=False,
 )
 app.add_typer(integration_app, name="integration")
@@ -2048,7 +2086,7 @@ def integration_list(
         console.print(table)
         return
 
-    table = Table(title="Coding Agent Integrations")
+    table = Table(title="AI Agent Integrations")
     table.add_column("Key", style="cyan")
     table.add_column("Name")
     table.add_column("Status")
@@ -2117,16 +2155,19 @@ def integration_install(
 
     selected_script = _resolve_script_type(project_root, script)
 
-    # Build parsed options from --integration-options so the integration
-    # can determine its effective invoke separator before shared infra
-    # is installed.
+    # Build parsed options from --integration-options
     parsed_options: dict[str, Any] | None = None
     if integration_options:
         parsed_options = _parse_integration_options(integration, integration_options)
 
     # Ensure shared infrastructure is present (safe to run unconditionally;
     # _install_shared_infra merges missing files without overwriting).
-    _install_shared_infra(project_root, selected_script, invoke_separator=integration.effective_invoke_separator(parsed_options))
+    _install_shared_infra(
+        project_root,
+        selected_script,
+        integration=integration,
+        parsed_options=parsed_options,
+    )
     if os.name != "nt":
         ensure_executable_scripts(project_root)
 
@@ -2403,24 +2444,26 @@ def integration_switch(
         opts.pop("context_file", None)
         save_init_options(project_root, opts)
 
-    # Build parsed options from --integration-options so the integration
-    # can determine its effective invoke separator before shared infra
-    # is installed.
+    # Phase 2: Install target integration
+    console.print(f"Installing integration: [cyan]{target}[/cyan]")
+    manifest = IntegrationManifest(
+        target_integration.key, project_root, version=get_speckit_version()
+    )
+
     parsed_options: dict[str, Any] | None = None
     if integration_options:
         parsed_options = _parse_integration_options(target_integration, integration_options)
 
     # Ensure shared infrastructure is present (safe to run unconditionally;
     # _install_shared_infra merges missing files without overwriting).
-    _install_shared_infra(project_root, selected_script, invoke_separator=target_integration.effective_invoke_separator(parsed_options))
+    _install_shared_infra(
+        project_root,
+        selected_script,
+        integration=target_integration,
+        parsed_options=parsed_options,
+    )
     if os.name != "nt":
         ensure_executable_scripts(project_root)
-
-    # Phase 2: Install target integration
-    console.print(f"Installing integration: [cyan]{target}[/cyan]")
-    manifest = IntegrationManifest(
-        target_integration.key, project_root, version=get_speckit_version()
-    )
 
     try:
         target_integration.setup(
@@ -2515,15 +2558,18 @@ def integration_upgrade(
 
     selected_script = _resolve_script_type(project_root, script)
 
-    # Build parsed options from --integration-options so the integration
-    # can determine its effective invoke separator before shared infra
-    # is installed.
     parsed_options: dict[str, Any] | None = None
     if integration_options:
         parsed_options = _parse_integration_options(integration, integration_options)
 
     # Ensure shared infrastructure is up to date; --force overwrites existing files.
-    _install_shared_infra(project_root, selected_script, force=force, invoke_separator=integration.effective_invoke_separator(parsed_options))
+    _install_shared_infra(
+        project_root,
+        selected_script,
+        force=force,
+        integration=integration,
+        parsed_options=parsed_options,
+    )
     if os.name != "nt":
         ensure_executable_scripts(project_root)
 

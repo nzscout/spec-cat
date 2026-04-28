@@ -70,22 +70,58 @@ def _iter_cl_prompt_extras() -> list[Path]:
     return sorted(path for path in prompts_dir.iterdir() if path.is_file() and path.name.endswith(".prompt.md"))
 
 
-def _claude_extra_skill_name(prompt_path: Path) -> str:
+def _extra_skill_name(prompt_path: Path) -> str:
     prompt_name = prompt_path.name.removesuffix(".prompt.md")
     return prompt_name.replace(".", "-")
 
 
-def _should_install_claude_extras(project_root: Path) -> bool:
+def _claude_extra_skill_name(prompt_path: Path) -> str:
+    return _extra_skill_name(prompt_path)
+
+
+def _should_install_skill_extras(project_root: Path, agent_key: str) -> bool:
     from specify_cli import load_init_options
 
     init_options = load_init_options(project_root)
     selected_ai = init_options.get("ai") if isinstance(init_options, dict) else None
-    return selected_ai == "claude" or (project_root / ".claude" / "skills").exists()
+    selected_integration = init_options.get("integration") if isinstance(init_options, dict) else None
+
+    if agent_key == "claude":
+        return (
+            selected_ai == "claude"
+            or selected_integration == "claude"
+            or (project_root / ".claude" / "skills").exists()
+        )
+
+    if agent_key == "codex":
+        return (
+            selected_ai == "codex"
+            or selected_integration == "codex"
+            or (project_root / ".agents" / "skills").exists()
+        )
+
+    return False
 
 
-def _render_claude_extra_skill(prompt_path: Path) -> str:
+def _should_install_claude_extras(project_root: Path) -> bool:
+    return _should_install_skill_extras(project_root, "claude")
+
+
+def _should_install_codex_extras(project_root: Path) -> bool:
+    return _should_install_skill_extras(project_root, "codex")
+
+
+def _skill_extras_dir(project_root: Path, agent_key: str) -> Path:
+    if agent_key == "claude":
+        return project_root / ".claude" / "skills"
+    if agent_key == "codex":
+        return project_root / ".agents" / "skills"
+    raise ValueError(f"Unsupported skill extras agent: {agent_key}")
+
+
+def _render_skill_extra(prompt_path: Path, agent_key: str) -> str:
     from specify_cli.agents import CommandRegistrar
-    from specify_cli.integrations.claude import ClaudeIntegration
+    from specify_cli.integrations import get_integration
 
     registrar = CommandRegistrar()
     prompt_text = prompt_path.read_text(encoding="utf-8")
@@ -104,7 +140,7 @@ def _render_claude_extra_skill(prompt_path: Path) -> str:
     if prompt_body.strip():
         sections.append(prompt_body.strip())
 
-    skill_name = _claude_extra_skill_name(prompt_path)
+    skill_name = _extra_skill_name(prompt_path)
     description = ""
     if isinstance(prompt_frontmatter, dict):
         description = str(prompt_frontmatter.get("description") or "").strip()
@@ -119,36 +155,52 @@ def _render_claude_extra_skill(prompt_path: Path) -> str:
     )
     skill_content = registrar.render_frontmatter(skill_frontmatter) + "\n" + "\n\n".join(sections).strip() + "\n"
 
-    integration = ClaudeIntegration()
+    integration = get_integration(agent_key)
+    if integration is None:
+        raise ValueError(f"Integration not registered: {agent_key}")
     skill_content = integration.post_process_skill_content(skill_content)
 
     argument_hint = prompt_frontmatter.get("argument-hint") if isinstance(prompt_frontmatter, dict) else None
-    if isinstance(argument_hint, str) and argument_hint.strip():
+    if (
+        agent_key == "claude"
+        and isinstance(argument_hint, str)
+        and argument_hint.strip()
+        and hasattr(integration, "inject_argument_hint")
+    ):
         skill_content = integration.inject_argument_hint(skill_content, argument_hint.strip())
 
     return skill_content
 
 
-def _install_claude_extras(project_root: Path, dry_run: bool) -> tuple[int, int]:
-    if not _should_install_claude_extras(project_root):
+def _render_claude_extra_skill(prompt_path: Path) -> str:
+    return _render_skill_extra(prompt_path, "claude")
+
+
+def _render_codex_extra_skill(prompt_path: Path) -> str:
+    return _render_skill_extra(prompt_path, "codex")
+
+
+def _install_skill_extras(project_root: Path, dry_run: bool, agent_key: str) -> tuple[int, int]:
+    if not _should_install_skill_extras(project_root, agent_key):
         return 0, 0
 
-    skills_dir = project_root / ".claude" / "skills"
+    skills_dir = _skill_extras_dir(project_root, agent_key)
     created = updated = 0
 
     for prompt_path in _iter_cl_prompt_extras():
-        skill_name = _claude_extra_skill_name(prompt_path)
+        skill_name = _extra_skill_name(prompt_path)
         skill_file = skills_dir / skill_name / "SKILL.md"
         is_update = skill_file.exists()
+        rel_path = skill_file.relative_to(project_root)
 
         if dry_run:
             label = "[DRY-U]" if is_update else "[DRY]  "
-            console.print(f"  [cyan]{label} .claude/skills/{skill_name}/SKILL.md (would {'overwrite' if is_update else 'create'})[/cyan]")
+            console.print(f"  [cyan]{label} {rel_path.as_posix()} (would {'overwrite' if is_update else 'create'})[/cyan]")
         else:
             skill_file.parent.mkdir(parents=True, exist_ok=True)
-            skill_file.write_text(_render_claude_extra_skill(prompt_path), encoding="utf-8")
+            skill_file.write_text(_render_skill_extra(prompt_path, agent_key), encoding="utf-8")
             label = "[UP]  " if is_update else "[OK]  "
-            console.print(f"  [green]{label} .claude/skills/{skill_name}/SKILL.md[/green]")
+            console.print(f"  [green]{label} {rel_path.as_posix()}[/green]")
 
         if is_update:
             updated += 1
@@ -156,6 +208,14 @@ def _install_claude_extras(project_root: Path, dry_run: bool) -> tuple[int, int]
             created += 1
 
     return created, updated
+
+
+def _install_claude_extras(project_root: Path, dry_run: bool) -> tuple[int, int]:
+    return _install_skill_extras(project_root, dry_run, "claude")
+
+
+def _install_codex_extras(project_root: Path, dry_run: bool) -> tuple[int, int]:
+    return _install_skill_extras(project_root, dry_run, "codex")
 
 
 def _has_required_script_patches(project_root: Path) -> bool:
@@ -221,6 +281,10 @@ def _copy_extras(project_root: Path, dry_run: bool) -> tuple[int, int, int]:
     copied += claude_created
     skipped += claude_updated
 
+    codex_created, codex_updated = _install_codex_extras(project_root, dry_run=dry_run)
+    copied += codex_created
+    skipped += codex_updated
+
     return copied, skipped, 0
 
 
@@ -233,7 +297,7 @@ def init(
     project_root: str  = typer.Option(".", "--root", "-r", help="Project root (defaults to CWD)"),
     dry_run: bool      = typer.Option(False, "--dry-run", "-n", help="Preview without writing files"),
     skip_extras: bool  = typer.Option(False, "--skip-extras", help="Skip extras copy (use on re-inits)"),
-    ai: str            = typer.Option("copilot", "--ai", help="AI assistant for specify init (copilot or claude)"),
+    ai: str            = typer.Option("copilot", "--ai", help="AI assistant for specify init (copilot, claude, or codex)"),
 ) -> None:
     """Run specify init then apply CL patches and extras in one step."""
     root = Path(project_root).resolve()
@@ -359,6 +423,18 @@ def verify(
             skill_path = claude_skills_dir / skill_name / "SKILL.md"
             checks.append((
                 f"Claude extra present: .claude/skills/{skill_name}/SKILL.md",
+                skill_path.exists(),
+                str(skill_path),
+            ))
+
+    # --- Codex skill extras (when Codex skills are present) ------------------
+    codex_skills_dir = root / ".agents" / "skills"
+    if codex_skills_dir.exists():
+        for prompt_path in _iter_cl_prompt_extras():
+            skill_name = _extra_skill_name(prompt_path)
+            skill_path = codex_skills_dir / skill_name / "SKILL.md"
+            checks.append((
+                f"Codex extra present: .agents/skills/{skill_name}/SKILL.md",
                 skill_path.exists(),
                 str(skill_path),
             ))

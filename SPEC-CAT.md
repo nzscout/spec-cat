@@ -94,6 +94,9 @@ speckit init
 # Bootstrap for Claude Code instead of Copilot
 speckit init --ai claude
 
+# Bootstrap for Codex instead of Copilot
+speckit init --ai codex
+
 # Preview without writing any files
 speckit init --dry-run
 
@@ -134,6 +137,21 @@ When using `speckit init --ai claude`, the CL prompt extras are also generated a
 
 ```
 .claude/
+  skills/
+    speckat-bootstrap-worktrees/
+      SKILL.md
+    speckat-compare-code/
+      SKILL.md
+    speckat-compare-specs/
+      SKILL.md
+    speckat-git-commit/
+      SKILL.md
+```
+
+When using `speckit init --ai codex`, the same CL prompt extras are also generated as Codex skills under `.agents/skills/`, for example:
+
+```
+.agents/
   skills/
     speckat-bootstrap-worktrees/
       SKILL.md
