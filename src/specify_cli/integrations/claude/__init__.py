@@ -2,23 +2,10 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any
 
-import re
-
-import yaml
-
 from ..base import SkillsIntegration
-from ..manifest import IntegrationManifest
-
-# Note injected into hook sections so Claude maps dot-notation command
-# names (from extensions.yml) to the hyphenated skill names it uses.
-_HOOK_COMMAND_NOTE = (
-    "- When constructing slash commands from hook command names, "
-    "replace dots (`.`) with hyphens (`-`). "
-    "For example, `speckit.git.commit` → `/speckit-git-commit`.\n"
-)
+from ..._utils import dump_frontmatter
 
 # Mapping of command template stem → argument-hint text shown inline
 # when a user invokes the slash command in Claude Code.
@@ -32,6 +19,15 @@ ARGUMENT_HINTS: dict[str, str] = {
     "constitution": "Principles or values for the project constitution",
     "checklist": "Domain or focus area for the checklist",
     "taskstoissues": "Optional filter or label for GitHub issues",
+}
+
+# Per-command frontmatter overrides for skills that should run in a forked
+# subagent context. Read-only analysis commands are good candidates: the
+# heavy reads (spec/plan/tasks artefacts) collapse to a short summary,
+# so isolating them keeps the main conversation context clean.
+# See https://code.claude.com/docs/en/skills#run-skills-in-a-subagent
+FORK_CONTEXT_COMMANDS: dict[str, dict[str, str]] = {
+    "analyze": {"context": "fork", "agent": "general-purpose"},
 }
 
 
@@ -53,55 +49,55 @@ class ClaudeIntegration(SkillsIntegration):
         "extension": "/SKILL.md",
     }
     context_file = "CLAUDE.md"
+    multi_install_safe = True
 
     @staticmethod
     def inject_argument_hint(content: str, hint: str) -> str:
-        """Insert ``argument-hint`` after ``description`` in YAML frontmatter.
+        """Insert ``argument-hint`` after the first ``description:`` in YAML frontmatter.
 
         Skips injection if ``argument-hint:`` already exists in the
         frontmatter to avoid duplicate keys.
         """
-        match = re.match(
-            r"^(---\s*\r?\n)(.*?)(\r?\n---\s*)(\r?\n|$)(.*)$",
-            content,
-            re.DOTALL,
-        )
-        if not match:
-            return content
+        lines = content.splitlines(keepends=True)
 
-        opening, frontmatter_text, closing, separator, rest = match.groups()
-        try:
-            frontmatter = yaml.safe_load(frontmatter_text) or {}
-        except yaml.YAMLError:
-            return content
+        # Pre-scan: bail out if argument-hint already present in frontmatter
+        dash_count = 0
+        for line in lines:
+            stripped = line.rstrip("\n\r")
+            if stripped == "---":
+                dash_count += 1
+                if dash_count == 2:
+                    break
+                continue
+            if dash_count == 1 and stripped.startswith("argument-hint:"):
+                return content  # already present
 
-        if not isinstance(frontmatter, dict) or "argument-hint" in frontmatter:
-            return content
-
-        updated_frontmatter: dict[str, Any] = {}
-        inserted = False
-        for key, value in frontmatter.items():
-            updated_frontmatter[key] = value
-            if key == "description":
-                updated_frontmatter["argument-hint"] = hint
-                inserted = True
-
-        if not inserted:
-            updated_frontmatter["argument-hint"] = hint
-
-        rendered_frontmatter = yaml.safe_dump(
-            updated_frontmatter,
-            sort_keys=False,
-            width=4096,
-            allow_unicode=True,
-        ).strip()
-        escaped_hint = hint.replace("\\", "\\\\").replace('"', '\\"')
-        rendered_frontmatter = re.sub(
-            r"(?m)^argument-hint:.*$",
-            f'argument-hint: "{escaped_hint}"',
-            rendered_frontmatter,
-        )
-        return f"{opening}{rendered_frontmatter}{closing}{separator}{rest}"
+        out: list[str] = []
+        in_fm = False
+        dash_count = 0
+        injected = False
+        for line in lines:
+            stripped = line.rstrip("\n\r")
+            if stripped == "---":
+                dash_count += 1
+                in_fm = dash_count == 1
+                out.append(line)
+                continue
+            if in_fm and not injected and stripped.startswith("description:"):
+                out.append(line)
+                # Preserve the exact line-ending style (\r\n vs \n)
+                if line.endswith("\r\n"):
+                    eol = "\r\n"
+                elif line.endswith("\n"):
+                    eol = "\n"
+                else:
+                    eol = ""
+                escaped = hint.replace("\\", "\\\\").replace('"', '\\"')
+                out.append(f'argument-hint: "{escaped}"{eol}')
+                injected = True
+                continue
+            out.append(line)
+        return "".join(out)
 
     def _render_skill(self, template_name: str, frontmatter: dict[str, Any], body: str) -> str:
         """Render a processed command template as a Claude skill."""
@@ -113,7 +109,7 @@ class ClaudeIntegration(SkillsIntegration):
         skill_frontmatter = self._build_skill_fm(
             skill_name, description, f"templates/commands/{template_name}.md"
         )
-        frontmatter_text = yaml.safe_dump(skill_frontmatter, sort_keys=False).strip()
+        frontmatter_text = dump_frontmatter(skill_frontmatter)
         return f"---\n{frontmatter_text}\n---\n\n{body.strip()}\n"
 
     def _build_skill_fm(self, name: str, description: str, source: str) -> dict:
@@ -160,80 +156,46 @@ class ClaudeIntegration(SkillsIntegration):
         return "".join(out)
 
     @staticmethod
-    def _inject_hook_command_note(content: str) -> str:
-        """Insert a dot-to-hyphen note before each hook output instruction.
+    def _skill_stem_from_content(content: str) -> str | None:
+        """Derive the command stem (e.g. ``analyze``) from a skill's frontmatter.
 
-        Targets the line ``- For each executable hook, output the following``
-        and inserts the note on the line before it, matching its indentation.
-        Skips if the note is already present.
+        Reads the ``name:`` field of the first frontmatter block and strips
+        the ``speckit-`` prefix. Returns ``None`` when no name is present.
         """
-        if "replace dots" in content:
-            return content
-
-        def repl(m: re.Match[str]) -> str:
-            indent = m.group(1)
-            instruction = m.group(2)
-            eol = m.group(3)
-            return (
-                indent
-                + _HOOK_COMMAND_NOTE.rstrip("\n")
-                + eol
-                + indent
-                + instruction
-                + eol
-            )
-
-        return re.sub(
-            r"(?m)^(\s*)(- For each executable hook, output the following[^\r\n]*)(\r\n|\n|$)",
-            repl,
-            content,
-        )
+        dash_count = 0
+        for line in content.splitlines():
+            stripped = line.rstrip("\r\n")
+            if stripped == "---":
+                dash_count += 1
+                if dash_count == 2:
+                    break
+                continue
+            if dash_count == 1 and stripped.startswith("name:"):
+                name = stripped[len("name:"):].strip().strip('"').strip("'")
+                if name.startswith("speckit-"):
+                    return name[len("speckit-"):]
+                return name or None
+        return None
 
     def post_process_skill_content(self, content: str) -> str:
-        """Inject Claude-specific frontmatter flags and hook notes."""
-        updated = self._inject_frontmatter_flag(content, "user-invocable")
+        """Inject Claude-specific frontmatter flags, hook notes, and any
+        per-command frontmatter.
+
+        Applied by every skill-generation path (setup, presets, extensions),
+        so command-specific frontmatter (argument-hint, fork context) stays
+        consistent however the SKILL.md was produced.
+        """
+        updated = super().post_process_skill_content(content)
+        updated = self._inject_frontmatter_flag(updated, "user-invocable")
         updated = self._inject_frontmatter_flag(updated, "disable-model-invocation", "false")
-        updated = self._inject_hook_command_note(updated)
-        return updated
 
-    def setup(
-        self,
-        project_root: Path,
-        manifest: IntegrationManifest,
-        parsed_options: dict[str, Any] | None = None,
-        **opts: Any,
-    ) -> list[Path]:
-        """Install Claude skills, then inject Claude-specific flags and argument-hints."""
-        created = super().setup(project_root, manifest, parsed_options, **opts)
-
-        # Post-process generated skill files
-        skills_dir = self.skills_dest(project_root).resolve()
-
-        for path in created:
-            # Only touch SKILL.md files under the skills directory
-            try:
-                path.resolve().relative_to(skills_dir)
-            except ValueError:
-                continue
-            if path.name != "SKILL.md":
-                continue
-
-            content_bytes = path.read_bytes()
-            content = content_bytes.decode("utf-8")
-
-            updated = self.post_process_skill_content(content)
-
-            # Inject argument-hint if available for this skill
-            skill_dir_name = path.parent.name  # e.g. "speckit-plan"
-            stem = skill_dir_name
-            if stem.startswith("speckit-"):
-                stem = stem[len("speckit-"):]
+        stem = self._skill_stem_from_content(updated)
+        if stem:
             hint = ARGUMENT_HINTS.get(stem, "")
             if hint:
                 updated = self.inject_argument_hint(updated, hint)
-
-            if updated != content:
-                path.write_bytes(updated.encode("utf-8"))
-                self.record_file_in_manifest(path, project_root, manifest)
-
-        return created
+            fork_config = FORK_CONTEXT_COMMANDS.get(stem)
+            if fork_config:
+                for key, value in fork_config.items():
+                    updated = self._inject_frontmatter_flag(updated, key, value)
+        return updated

@@ -142,8 +142,12 @@ def _render_skill_extra(prompt_path: Path, agent_key: str) -> str:
 
     skill_name = _extra_skill_name(prompt_path)
     description = ""
+    argument_hint = ""
     if isinstance(prompt_frontmatter, dict):
         description = str(prompt_frontmatter.get("description") or "").strip()
+        raw_hint = prompt_frontmatter.get("argument-hint")
+        if isinstance(raw_hint, str):
+            argument_hint = raw_hint.strip()
     if not description:
         description = f"CL extra prompt: {skill_name}"
 
@@ -153,21 +157,26 @@ def _render_skill_extra(prompt_path: Path, agent_key: str) -> str:
         description,
         f"cl-tools/extras/.github/prompts/{prompt_path.name}",
     )
+
+    # Add argument-hint to the frontmatter dict (Claude only) before rendering.
+    # Injecting it after render is unsafe: upstream's line-based
+    # inject_argument_hint splits multi-line (yaml-wrapped) description values,
+    # which corrupts the frontmatter for CL prompts with long descriptions.
+    if agent_key == "claude" and argument_hint:
+        reordered: dict = {}
+        for key, value in skill_frontmatter.items():
+            reordered[key] = value
+            if key == "description":
+                reordered["argument-hint"] = argument_hint
+        reordered.setdefault("argument-hint", argument_hint)
+        skill_frontmatter = reordered
+
     skill_content = registrar.render_frontmatter(skill_frontmatter) + "\n" + "\n\n".join(sections).strip() + "\n"
 
     integration = get_integration(agent_key)
     if integration is None:
         raise ValueError(f"Integration not registered: {agent_key}")
     skill_content = integration.post_process_skill_content(skill_content)
-
-    argument_hint = prompt_frontmatter.get("argument-hint") if isinstance(prompt_frontmatter, dict) else None
-    if (
-        agent_key == "claude"
-        and isinstance(argument_hint, str)
-        and argument_hint.strip()
-        and hasattr(integration, "inject_argument_hint")
-    ):
-        skill_content = integration.inject_argument_hint(skill_content, argument_hint.strip())
 
     return skill_content
 
@@ -460,6 +469,11 @@ def verify(
 
 
 def main() -> None:
+    # Importing specify_cli runs _enable_windows_console_fallback() at module
+    # load, hardening stdout/stderr before any Rich output on the speckit path.
+    from specify_cli import _enable_windows_console_fallback
+
+    _enable_windows_console_fallback()
     app()
 
 

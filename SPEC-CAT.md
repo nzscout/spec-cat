@@ -382,3 +382,36 @@ Test-Path ".github\agents\context7.agent.md"
 | `sync/v*-manual` | Created only on rebase failure | CI | Manual conflict resolution |
 
 > **`cl/main` is the default branch.** Install from here or from a `v*-cl*` release tag.
+
+---
+
+## Known follow-up: Git Flow rework (deferred)
+
+The Git Flow patches in `cl-tools/patches/` (and the `test_gitflow_powershell.py` suite,
+currently skipped) are **obsolete** after the upstream `v0.11` sync and need to be
+re-implemented rather than repaired.
+
+**Why they broke.** When Git Flow support was added, spec-kit only offered sequential
+(`001-name`) or timestamp branch naming and derived the spec folder *from* the branch name.
+There was no way to get a `feature/<name>` branch with a clean `specs/<name>` folder, so the
+deployed scripts were monkey-patched (`common.ps1`, `create-new-feature.ps1`).
+
+**What changed upstream.** spec-kit now supports this natively:
+
+- The spec folder is resolved from `.specify/feature.json` / `SPECIFY_FEATURE_DIRECTORY`,
+  not by parsing the branch name. `Get-CurrentBranch` returns `$env:SPECIFY_FEATURE`;
+  `Get-FeatureName` / `Get-FeatureDir` were removed.
+- The git extension's `create-new-feature-branch.ps1` honors a `GIT_BRANCH_NAME` override,
+  so an arbitrary `feature/<name>` branch can be created directly.
+- `Test-FeatureBranch` and branch creation moved into the `git` extension; core scripts no
+  longer touch git.
+
+As a result `apply.ps1`'s anchors no longer resolve, the script patches are redundant, and
+`speckit init`'s patch phase reports failures for the Git Flow patches.
+
+**Planned approach.** Retire the script patches and re-express Git Flow as agent-prompt
+guidance that drives the native env vars (`GIT_BRANCH_NAME=feature/<short-name>` +
+`SPECIFY_FEATURE_DIRECTORY=specs/<short-name>`), keeping only the `speckit.specify` step-1/2
+guidance. If a turnkey script flag is still wanted, package it as a small custom extension
+instead of patching core. The skipped tests in `test_gitflow_powershell.py` will be rewritten
+against the new mechanism as part of that work.

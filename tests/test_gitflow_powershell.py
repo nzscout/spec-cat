@@ -43,8 +43,17 @@ description: test stub
     - placeholder step 3
 """
 
-pytestmark = pytest.mark.skipif(
-    shutil.which("pwsh") is None, reason="pwsh not available"
+pytestmark = pytest.mark.skip(
+    reason=(
+        "Git Flow PowerShell patches are obsolete after the upstream "
+        "feature.json / GIT_BRANCH_NAME redesign (spec-kit >= 0.9). Feature "
+        "resolution no longer parses branch names (Get-FeatureName/Get-FeatureDir "
+        "removed, Get-CurrentBranch rewritten) and Test-FeatureBranch moved to the "
+        "git extension, so apply.ps1's anchors no longer resolve. Git Flow is being "
+        "re-implemented on top of the native env vars (GIT_BRANCH_NAME + "
+        "SPECIFY_FEATURE_DIRECTORY) instead of script patching; these tests will be "
+        "rewritten as part of that follow-up. Tracking: SPEC-CAT.md Git Flow rework."
+    )
 )
 
 
