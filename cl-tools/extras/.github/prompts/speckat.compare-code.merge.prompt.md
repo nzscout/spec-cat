@@ -42,13 +42,15 @@ Normalize feature paths before comparing them:
 1. Convert backslashes to forward slashes and trim trailing slashes.
 2. If the path is absolute, strip everything through `/specs/`.
 3. Canonicalize the result to repo-relative `specs/<feature-directory>` form.
-4. Derive the feature alias stem by removing the final hyphen-delimited suffix segment from `<feature-directory>`.
+4. Derive the strict feature identity prefix from the leading Jira-style task id plus trailing hyphen, for example `DATA-5332-`.
+5. Treat team/worktree marker segments such as `CL`, `CP`, `A`, and `B` as non-identity markers that may appear either as the final suffix or as an internal hyphen-delimited segment after the Jira prefix.
 
 Validation rules after normalization:
 
 1. All `team_cl_feature_path` values across inputs must canonicalize to the same Team-CL feature directory.
 2. All `team_cp_feature_path` values across inputs must canonicalize to the same Team-CP feature directory.
-3. The CL and CP feature directories must share the same feature alias stem.
+3. The CL and CP feature directories must share the same Jira task-id prefix.
+4. Do not fail solely because one feature directory places the team/worktree marker at the end (for example `...-CL`) while another places it immediately after the Jira prefix (for example `DATA-5332-CP-...`).
 
 Valid examples:
 
@@ -57,6 +59,9 @@ Valid examples:
 
 - `DATA-5330-2-Migrate-v1-to-v2-go-A`
 - `DATA-5330-2-Migrate-v1-to-v2-go-B`
+
+- `DATA-5332-delta-monitoring-infra`
+- `DATA-5332-CP-delta-monitoring-infra`
 
 Reject example:
 
@@ -68,7 +73,10 @@ Examples that must be treated as equivalent:
 - `specs/DATA-5330-2-Migrate-v1-to-v2-go-CL`
 - `C:/Projects/Eclypsium/VLS.Cloud.CL/specs/DATA-5330-2-Migrate-v1-to-v2-go-CL`
 
-Only fail this precondition when the normalized feature identities differ or the alias stems do not match. Do not fail solely because one review used an absolute worktree path and another used a repo-relative path.
+- `specs/DATA-5332-CP-delta-monitoring-infra`
+- `DATA-5332-CP-delta-monitoring-infra`
+
+Only fail this precondition when the normalized feature identities differ, the Jira task-id prefixes do not match, or the CL/CP paths do not resolve to a coherent feature pair. Do not fail solely because one review used an absolute worktree path and another used a repo-relative path, or because the team/worktree marker appears in a different segment position.
 
 If any precondition fails, stop and explain the mismatch to the user.
 
